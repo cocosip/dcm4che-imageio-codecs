@@ -3,7 +3,9 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.imageio.stream.ImageInputStream;
@@ -19,17 +21,32 @@ public final class BaselineJpegCodec {
         if (frame.precision() != 8) {
             throw new JpegException("JPEG Baseline requires 8-bit samples");
         }
-        return encode(frame, 0xc0);
+        return encode(frame, 0xc0, 0);
+    }
+
+    public static byte[] encode(JpegFrame frame, int restartInterval) throws IOException {
+        if (frame.precision() != 8) {
+            throw new JpegException("JPEG Baseline requires 8-bit samples");
+        }
+        return encode(frame, 0xc0, restartInterval);
     }
 
     static byte[] encodeExtended(JpegFrame frame) throws IOException {
+        return encodeExtended(frame, 0);
+    }
+
+    static byte[] encodeExtended(JpegFrame frame, int restartInterval) throws IOException {
         if (frame.precision() < 8 || frame.precision() > 12) {
             throw new JpegException("JPEG Extended requires 8-12 bit samples");
         }
-        return encode(frame, 0xc1);
+        return encode(frame, 0xc1, restartInterval);
     }
 
-    private static byte[] encode(JpegFrame frame, int frameMarker) throws IOException {
+    private static byte[] encode(JpegFrame frame, int frameMarker, int restartInterval)
+            throws IOException {
+        if (restartInterval < 0 || restartInterval > 0xffff) {
+            throw new IllegalArgumentException("JPEG restart interval must fit in 16 bits");
+        }
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
@@ -40,6 +57,10 @@ public final class BaselineJpegCodec {
         }
         writeFrameHeader(output, frame, frameMarker);
         writeHuffmanTables(output, frame.components());
+        if (restartInterval != 0) {
+            JpegMarkerWriter.write(output, 0xdd, new byte[] {
+                    (byte) (restartInterval >>> 8), (byte) restartInterval});
+        }
         writeScanHeader(output, frame.components());
         BitWriter bits = new BitWriter(output);
         HuffmanTable[] dc = {JpegTables.standardLuminanceDc(), JpegTables.standardChrominanceDc()};
@@ -49,12 +70,22 @@ public final class BaselineJpegCodec {
             QuantizationTable.of(JpegTables.standardChrominanceQuantization())
         };
         int[] previousDc = new int[frame.components()];
+        int restartIndex = 0;
+        int mcuIndex = 0;
         for (int by = 0; by < frame.height(); by += 8) {
             for (int bx = 0; bx < frame.width(); bx += 8) {
+                if (restartInterval != 0 && mcuIndex != 0 && mcuIndex % restartInterval == 0) {
+                    bits.flush();
+                    output.write(0xff);
+                    output.write(0xd0 + restartIndex);
+                    restartIndex = (restartIndex + 1) & 7;
+                    previousDc = new int[frame.components()];
+                }
                 for (int component = 0; component < frame.components(); component++) {
                     encodeBlock(bits, frame, bx, by, component, quant[component == 0 ? 0 : 1],
                             dc[component == 0 ? 0 : 1], ac[component == 0 ? 0 : 1], previousDc, component);
                 }
+                mcuIndex++;
             }
         }
         bits.flush();
@@ -88,6 +119,7 @@ public final class BaselineJpegCodec {
         int precision = 0;
         int components = 0;
         int[] componentIds = null;
+        int restartInterval = 0;
         boolean scanSeen = false;
         JpegMarkerReader markers = new JpegMarkerReader(input);
         while (!scanSeen) {
@@ -98,6 +130,11 @@ public final class BaselineJpegCodec {
                 parseQuantization(payload, quant);
             } else if (code == 0xc4) {
                 parseHuffman(payload, huffman);
+            } else if (code == 0xdd) {
+                if (payload.length != 2) {
+                    throw new JpegException("invalid JPEG restart interval");
+                }
+                restartInterval = u16(payload, 0);
             } else if (code == expectedFrameMarker) {
                 precision = payload.length < 1 ? 0 : payload[0] & 0xff;
                 if (payload.length < 6 || (extended ? precision < 8 || precision > 12
@@ -126,16 +163,16 @@ public final class BaselineJpegCodec {
                     throw new JpegException("JPEG scan appears before SOF0");
                 }
                 ScanHeader scan = parseScan(payload, componentIds, components);
-                byte[] entropy = JpegMarkerReader.readEntropyBytes(input);
+                ScanData entropy = readScan(input);
                 JpegFrame frame = decodeScan(width, height, components, precision, quant, huffman,
-                        scan, entropy);
+                        scan, restartInterval, entropy);
                 JpegMarker end = markers.next();
                 if (end.code() != 0xd9) {
                     throw new JpegException("JPEG frame does not end with EOI");
                 }
                 scanSeen = true;
                 return frame;
-            } else if (code == 0xdd || code == 0xc0 || code == 0xc1 || code == 0xc2 || code == 0xc3
+            } else if (code == 0xc0 || code == 0xc1 || code == 0xc2 || code == 0xc3
                     || code == 0xc9 || code == 0xca || code == 0xcb) {
                 throw new JpegException("unsupported JPEG marker: 0x" + Integer.toHexString(code));
             } else if (code == 0xd8 || code == 0xd9 || (code >= 0xd0 && code <= 0xd7)) {
@@ -143,6 +180,38 @@ public final class BaselineJpegCodec {
             }
         }
         throw new JpegException("JPEG scan is missing");
+    }
+
+    private static ScanData readScan(ImageInputStream input) throws IOException {
+        List<byte[]> segments = new ArrayList<byte[]>();
+        List<Integer> restartMarkers = new ArrayList<Integer>();
+        ByteArrayOutputStream segment = new ByteArrayOutputStream();
+        while (true) {
+            int value = input.read();
+            if (value < 0) {
+                throw new JpegException("truncated JPEG scan");
+            }
+            if (value != 0xff) {
+                segment.write(value);
+                continue;
+            }
+            int next = input.read();
+            if (next < 0) {
+                throw new JpegException("truncated JPEG scan marker");
+            }
+            if (next == 0) {
+                segment.write(0xff);
+                segment.write(0);
+            } else if (next >= 0xd0 && next <= 0xd7) {
+                segments.add(segment.toByteArray());
+                segment = new ByteArrayOutputStream();
+                restartMarkers.add(next);
+            } else {
+                input.seek(input.getStreamPosition() - 2);
+                segments.add(segment.toByteArray());
+                return new ScanData(segments, restartMarkers);
+            }
+        }
     }
 
     private static void writeQuantization(ImageOutputStream output, int id, int[] values) throws IOException {
@@ -252,17 +321,27 @@ public final class BaselineJpegCodec {
 
     private static JpegFrame decodeScan(int width, int height, int components, int precision,
             Map<Integer, QuantizationTable> quant, Map<Integer, HuffmanTable> huffman,
-            ScanHeader scan, byte[] entropy) throws IOException {
+            ScanHeader scan, int restartInterval, ScanData entropy) throws IOException {
         if (width == 0 || height == 0 || !scanSeenTables(quant, huffman, components)) {
             throw new JpegException("JPEG scan is missing required tables");
         }
         int[] samples = new int[width * height * components];
-        MemoryCacheImageInputStream entropyInput = new MemoryCacheImageInputStream(
-                new ByteArrayInputStream(entropy));
-        BitReader bits = new BitReader(entropyInput);
         int[] previousDc = new int[components];
-        for (int by = 0; by < height; by += 8) {
-            for (int bx = 0; bx < width; bx += 8) {
+        int blocksX = (width + 7) / 8;
+        int blocksY = (height + 7) / 8;
+        int totalMcu = blocksX * blocksY;
+        int mcu = 0;
+        int restartIndex = 0;
+        for (int segmentIndex = 0; segmentIndex < entropy.entropySegments.size(); segmentIndex++) {
+            int segmentEnd = restartInterval == 0
+                    ? totalMcu
+                    : Math.min(totalMcu, mcu + restartInterval);
+            MemoryCacheImageInputStream entropyInput = new MemoryCacheImageInputStream(
+                    new ByteArrayInputStream(entropy.entropySegments.get(segmentIndex)));
+            BitReader bits = new BitReader(entropyInput);
+            while (mcu < segmentEnd) {
+                int by = (mcu / blocksX) * 8;
+                int bx = (mcu % blocksX) * 8;
                 for (int component = 0; component < components; component++) {
                     int table = component == 0 ? 0 : 1;
                     int[] block = decodeBlock(bits, quant.get(table), huffman.get(table),
@@ -281,7 +360,19 @@ public final class BaselineJpegCodec {
                         }
                     }
                 }
+                mcu++;
             }
+            if (restartInterval != 0 && mcu < totalMcu) {
+                if (segmentIndex >= entropy.restartMarkers.size()
+                        || entropy.restartMarkers.get(segmentIndex) != 0xd0 + restartIndex) {
+                    throw new JpegException("JPEG restart marker sequence is invalid");
+                }
+                restartIndex = (restartIndex + 1) & 7;
+                previousDc = new int[components];
+            }
+        }
+        if (mcu != totalMcu || (restartInterval == 0 && !entropy.restartMarkers.isEmpty())) {
+            throw new JpegException("JPEG scan does not match restart interval");
         }
         return JpegFrame.of(width, height, components, samples, precision);
     }
@@ -414,6 +505,16 @@ public final class BaselineJpegCodec {
 
     private static int indexOf(int zigZagIndex) {
         return JpegZigZag.ORDER[zigZagIndex];
+    }
+
+    private static final class ScanData {
+        private final List<byte[]> entropySegments;
+        private final List<Integer> restartMarkers;
+
+        private ScanData(List<byte[]> entropySegments, List<Integer> restartMarkers) {
+            this.entropySegments = entropySegments;
+            this.restartMarkers = restartMarkers;
+        }
     }
 
     private static final class ScanHeader {

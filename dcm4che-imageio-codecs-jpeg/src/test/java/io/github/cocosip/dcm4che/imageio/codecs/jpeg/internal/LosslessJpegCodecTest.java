@@ -57,6 +57,31 @@ class LosslessJpegCodecTest {
         assertThrows(JpegException.class, () -> LosslessJpegCodec.decode(encoded, 1));
     }
 
+    @Test
+    void roundTripsWithRestartMarkersAndResetsPredictorContext() throws Exception {
+        int[] samples = new int[6 * 3];
+        for (int i = 0; i < samples.length; i++) {
+            samples[i] = (i * 41 + 7) & 0xff;
+        }
+        JpegFrame source = JpegFrame.of(6, 3, 1, samples, 8);
+
+        byte[] encoded = LosslessJpegCodec.encode(source, 1, 2);
+        JpegFrame decoded = LosslessJpegCodec.decode(encoded);
+
+        assertTrue(hasMarker(encoded, 0xdd));
+        assertTrue(hasRestartMarker(encoded));
+        assertArrayEquals(samples, decoded.samples());
+    }
+
+    @Test
+    void rejectsOutOfOrderRestartMarker() throws Exception {
+        JpegFrame source = JpegFrame.of(6, 3, 1, new int[18], 8);
+        byte[] encoded = LosslessJpegCodec.encode(source, 1, 2);
+        replaceFirstRestartMarker(encoded, 0xd1);
+
+        assertThrows(JpegException.class, () -> LosslessJpegCodec.decode(encoded));
+    }
+
     private static boolean hasMarker(byte[] data, int marker) {
         for (int i = 0; i + 1 < data.length; i++) {
             if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xff) == marker) {
@@ -64,5 +89,26 @@ class LosslessJpegCodecTest {
             }
         }
         return false;
+    }
+
+    private static boolean hasRestartMarker(byte[] data) {
+        for (int i = 0; i + 1 < data.length; i++) {
+            if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xff) >= 0xd0
+                    && (data[i + 1] & 0xff) <= 0xd7) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void replaceFirstRestartMarker(byte[] data, int marker) {
+        for (int i = 0; i + 1 < data.length; i++) {
+            if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xff) >= 0xd0
+                    && (data[i + 1] & 0xff) <= 0xd7) {
+                data[i + 1] = (byte) marker;
+                return;
+            }
+        }
+        throw new AssertionError("restart marker not found");
     }
 }

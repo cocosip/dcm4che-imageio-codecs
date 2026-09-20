@@ -3,7 +3,9 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.imageio.stream.ImageInputStream;
@@ -19,25 +21,45 @@ public final class LosslessJpegCodec {
     }
 
     public static byte[] encode(JpegFrame frame, int predictor) throws IOException {
-        validateFrame(frame, predictor);
+        return encode(frame, predictor, 0);
+    }
+
+    public static byte[] encode(JpegFrame frame, int predictor, int restartInterval)
+            throws IOException {
+        validateFrame(frame, predictor, restartInterval);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
         output.write(0xd8);
         JpegMarkerWriter.write(output, 0xc3, frameHeader(frame));
         JpegMarkerWriter.write(output, 0xc4, huffmanDefinition());
+        if (restartInterval != 0) {
+            JpegMarkerWriter.write(output, 0xdd, new byte[] {
+                    (byte) (restartInterval >>> 8), (byte) restartInterval});
+        }
         JpegMarkerWriter.write(output, 0xda, scanHeader(frame.components(), predictor));
 
         BitWriter bits = new BitWriter(output);
         int[] reconstructed = new int[frame.width() * frame.height() * frame.components()];
+        int restartStartMcu = 0;
+        int restartIndex = 0;
         for (int y = 0; y < frame.height(); y++) {
             for (int x = 0; x < frame.width(); x++) {
+                int mcuIndex = y * frame.width() + x;
+                if (restartInterval != 0 && mcuIndex != 0
+                        && mcuIndex % restartInterval == 0) {
+                    bits.flush();
+                    output.write(0xff);
+                    output.write(0xd0 + restartIndex);
+                    restartIndex = (restartIndex + 1) & 7;
+                    restartStartMcu = mcuIndex;
+                }
                 for (int component = 0; component < frame.components(); component++) {
                     int index = indexOf(frame.width(), frame.components(), x, y, component);
                     int sample = frame.sample(x, y, component);
                     int difference = normalizeDifference(sample
                             - predict(reconstructed, frame.width(), frame.components(), x, y,
-                                    component, frame.precision(), predictor));
+                                    component, frame.precision(), predictor, restartStartMcu));
                     int category = category(difference);
                     HuffmanCodec.encodeSymbol(bits, DEFAULT_HUFFMAN, category);
                     if (category > 0 && category != 16) {
@@ -64,11 +86,20 @@ public final class LosslessJpegCodec {
             throw new JpegException("JPEG Lossless predictor does not match the requested process");
         }
         int[] samples = new int[parsed.width * parsed.height * parsed.components];
-        MemoryCacheImageInputStream entropyInput = new MemoryCacheImageInputStream(
-                new ByteArrayInputStream(parsed.entropy));
-        BitReader bits = new BitReader(entropyInput);
-        for (int y = 0; y < parsed.height; y++) {
-            for (int x = 0; x < parsed.width; x++) {
+        int totalMcu = parsed.width * parsed.height;
+        int mcu = 0;
+        int restartStartMcu = 0;
+        int restartIndex = 0;
+        for (int segmentIndex = 0; segmentIndex < parsed.entropySegments.size(); segmentIndex++) {
+            int segmentEnd = parsed.restartInterval == 0
+                    ? totalMcu
+                    : Math.min(totalMcu, mcu + parsed.restartInterval);
+            MemoryCacheImageInputStream entropyInput = new MemoryCacheImageInputStream(
+                    new ByteArrayInputStream(parsed.entropySegments.get(segmentIndex)));
+            BitReader bits = new BitReader(entropyInput);
+            while (mcu < segmentEnd) {
+                int y = mcu / parsed.width;
+                int x = mcu % parsed.width;
                 for (int component = 0; component < parsed.components; component++) {
                     int category = HuffmanCodec.decodeSymbol(bits, parsed.huffman);
                     if (category > parsed.precision + 1 || category == 16 && parsed.precision < 16) {
@@ -78,20 +109,32 @@ public final class LosslessJpegCodec {
                             : category == 16 ? 1 << 15
                             : readAmplitude(bits, category);
                     int prediction = predict(samples, parsed.width, parsed.components, x, y,
-                            component, parsed.precision, parsed.predictor);
+                            component, parsed.precision, parsed.predictor, restartStartMcu);
                     int sample = normalizeSample(prediction + difference, parsed.precision);
                     if (sample < 0 || sample > (1 << parsed.precision) - 1) {
                         throw new JpegException("JPEG Lossless sample is outside precision range");
                     }
                     samples[indexOf(parsed.width, parsed.components, x, y, component)] = sample;
                 }
+                mcu++;
             }
+            if (parsed.restartInterval != 0 && mcu < totalMcu) {
+                if (segmentIndex >= parsed.restartMarkers.size()
+                        || parsed.restartMarkers.get(segmentIndex) != 0xd0 + restartIndex) {
+                    throw new JpegException("JPEG Lossless restart marker sequence is invalid");
+                }
+                restartIndex = (restartIndex + 1) & 7;
+                restartStartMcu = mcu;
+            }
+        }
+        if (mcu != totalMcu || (parsed.restartInterval == 0 && !parsed.restartMarkers.isEmpty())) {
+            throw new JpegException("JPEG Lossless scan does not match restart interval");
         }
         return JpegFrame.of(parsed.width, parsed.height, parsed.components, samples,
                 parsed.precision);
     }
 
-    private static void validateFrame(JpegFrame frame, int predictor) {
+    private static void validateFrame(JpegFrame frame, int predictor, int restartInterval) {
         if (frame == null) {
             throw new NullPointerException("frame");
         }
@@ -100,6 +143,9 @@ public final class LosslessJpegCodec {
         }
         if (predictor < 1 || predictor > 7) {
             throw new IllegalArgumentException("JPEG Lossless predictor must be between 1 and 7");
+        }
+        if (restartInterval < 0 || restartInterval > 0xffff) {
+            throw new IllegalArgumentException("JPEG Lossless restart interval must fit in 16 bits");
         }
     }
 
@@ -168,6 +214,7 @@ public final class LosslessJpegCodec {
         int precision = 0;
         int components = 0;
         int[] componentIds = null;
+        int restartInterval = 0;
         while (true) {
             JpegMarker marker = markers.next();
             int code = marker.code();
@@ -195,18 +242,24 @@ public final class LosslessJpegCodec {
                 }
             } else if (code == 0xc4) {
                 parseHuffman(payload, huffman);
+            } else if (code == 0xdd) {
+                if (payload.length != 2) {
+                    throw new JpegException("invalid JPEG Lossless restart interval");
+                }
+                restartInterval = u16(payload, 0);
             } else if (code == 0xda) {
                 if (componentIds == null || !huffman.containsKey(0)) {
                     throw new JpegException("JPEG Lossless scan is missing SOF3 or DHT");
                 }
                 int predictor = parseScan(payload, componentIds, components);
-                byte[] entropy = JpegMarkerReader.readEntropyBytes(input);
+                ScanData scan = readScan(input);
                 JpegMarker end = markers.next();
                 if (end.code() != 0xd9) {
                     throw new JpegException("JPEG Lossless frame does not end with EOI");
                 }
                 return new ParsedFrame(width, height, precision, components, predictor,
-                        huffman.get(0), entropy);
+                        huffman.get(0), restartInterval, scan.entropySegments,
+                        scan.restartMarkers);
             } else if ((code >= 0xe0 && code <= 0xef) || code == 0xfe) {
                 // APPn and COM metadata are not part of the predictive scan.
             } else if (code == 0xd8 || code == 0xd9 || (code >= 0xd0 && code <= 0xd7)) {
@@ -215,6 +268,38 @@ public final class LosslessJpegCodec {
             } else {
                 throw new JpegException("unsupported JPEG Lossless marker: 0x"
                         + Integer.toHexString(code));
+            }
+        }
+    }
+
+    private static ScanData readScan(ImageInputStream input) throws IOException {
+        List<byte[]> segments = new ArrayList<byte[]>();
+        List<Integer> restartMarkers = new ArrayList<Integer>();
+        ByteArrayOutputStream segment = new ByteArrayOutputStream();
+        while (true) {
+            int value = input.read();
+            if (value < 0) {
+                throw new JpegException("truncated JPEG Lossless scan");
+            }
+            if (value != 0xff) {
+                segment.write(value);
+                continue;
+            }
+            int next = input.read();
+            if (next < 0) {
+                throw new JpegException("truncated JPEG Lossless scan marker");
+            }
+            if (next == 0) {
+                segment.write(0xff);
+                segment.write(0);
+            } else if (next >= 0xd0 && next <= 0xd7) {
+                segments.add(segment.toByteArray());
+                segment = new ByteArrayOutputStream();
+                restartMarkers.add(next);
+            } else {
+                input.seek(input.getStreamPosition() - 2);
+                segments.add(segment.toByteArray());
+                return new ScanData(segments, restartMarkers);
             }
         }
     }
@@ -265,16 +350,19 @@ public final class LosslessJpegCodec {
     }
 
     private static int predict(int[] samples, int width, int components, int x, int y,
-            int component, int precision, int predictor) {
-        if (x == 0 && y == 0) {
+            int component, int precision, int predictor, int restartStartMcu) {
+        int mcu = y * width + x;
+        boolean hasLeft = x > 0 && mcu - 1 >= restartStartMcu;
+        boolean hasAbove = y > 0 && mcu - width >= restartStartMcu;
+        if (!hasLeft && !hasAbove) {
             return 1 << (precision - 1);
         }
-        int left = x == 0 ? 0 : samples[indexOf(width, components, x - 1, y, component)];
-        int above = y == 0 ? 0 : samples[indexOf(width, components, x, y - 1, component)];
-        if (y == 0) {
+        int left = hasLeft ? samples[indexOf(width, components, x - 1, y, component)] : 0;
+        int above = hasAbove ? samples[indexOf(width, components, x, y - 1, component)] : 0;
+        if (!hasAbove) {
             return left;
         }
-        if (x == 0) {
+        if (!hasLeft) {
             return above;
         }
         int upperLeft = samples[indexOf(width, components, x - 1, y - 1, component)];
@@ -328,6 +416,16 @@ public final class LosslessJpegCodec {
         return ((bytes[offset] & 0xff) << 8) | (bytes[offset + 1] & 0xff);
     }
 
+    private static final class ScanData {
+        private final List<byte[]> entropySegments;
+        private final List<Integer> restartMarkers;
+
+        private ScanData(List<byte[]> entropySegments, List<Integer> restartMarkers) {
+            this.entropySegments = entropySegments;
+            this.restartMarkers = restartMarkers;
+        }
+    }
+
     private static final class ParsedFrame {
         private final int width;
         private final int height;
@@ -335,17 +433,22 @@ public final class LosslessJpegCodec {
         private final int components;
         private final int predictor;
         private final HuffmanTable huffman;
-        private final byte[] entropy;
+        private final int restartInterval;
+        private final List<byte[]> entropySegments;
+        private final List<Integer> restartMarkers;
 
         private ParsedFrame(int width, int height, int precision, int components, int predictor,
-                HuffmanTable huffman, byte[] entropy) {
+                HuffmanTable huffman, int restartInterval, List<byte[]> entropySegments,
+                List<Integer> restartMarkers) {
             this.width = width;
             this.height = height;
             this.precision = precision;
             this.components = components;
             this.predictor = predictor;
             this.huffman = huffman;
-            this.entropy = entropy;
+            this.restartInterval = restartInterval;
+            this.entropySegments = entropySegments;
+            this.restartMarkers = restartMarkers;
         }
     }
 }

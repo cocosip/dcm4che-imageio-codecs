@@ -319,11 +319,11 @@ the authoritative status for the code currently in the repository:
 | Descriptor-backed dcm4che streams | Implemented | Uses the existing `ImageDescriptor` stream contract and reads/writes one logical frame per invocation. |
 | JDK interoperability | Verified for covered subset | JDK-generated baseline grayscale JPEG can be decoded; Baseline and 8-bit Extended writer output can be decoded by the JDK JPEG reader. |
 | JPEG Extended Process 2/4 `.51` | Implemented | Pure Java SOF1 sequential Huffman path supports unsigned 8/12-bit SF444 samples, with dedicated ImageIO SPI and descriptor-backed 16-bit container handling. |
-| JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding supports unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, and predictor 1 encoding; DRI/RST and point transforms are not implemented. |
-| JPEG Lossless Process 14 SV1 `.70` | Implemented | Dedicated ImageIO adapters enforce the fixed predictor-1 Process 14 SV1 contract; point transforms and restart intervals remain pending. |
+| JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding supports unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, predictor 1 encoding, and DRI/RST state validation; point transforms remain pending. |
+| JPEG Lossless Process 14 SV1 `.70` | Implemented | Dedicated ImageIO adapters enforce the fixed predictor-1 Process 14 SV1 contract; DRI/RST is supported internally and point transforms remain pending. |
 | Progressive JPEG | Not implemented | Progressive SOF markers are rejected. |
 | Arithmetic-coded JPEG | Not implemented | Arithmetic entropy coding is rejected. |
-| Restart intervals (`DRI`/`RST`) | Not implemented | Restart marker state and interval validation are not present. |
+| Restart intervals (`DRI`/`RST`) | Partially implemented | Lossless and sequential DCT byte-array codecs emit, consume, reset, and validate restart markers; ImageIO writer parameter exposure remains pending. |
 | CMYK/YCCK JPEG | Not implemented | Component counts and color models outside the covered 1/3-component path are rejected. |
 | ImageReadParam regions/subsampling/band selection | Not implemented | The reader explicitly rejects these options. |
 | Writer quality/compression parameters | Not implemented | Explicit compression mode/quality requests are rejected; the writer uses fixed quantization tables. |

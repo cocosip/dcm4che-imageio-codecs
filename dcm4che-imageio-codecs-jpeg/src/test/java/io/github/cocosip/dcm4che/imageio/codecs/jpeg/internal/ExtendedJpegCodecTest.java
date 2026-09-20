@@ -57,6 +57,28 @@ class ExtendedJpegCodecTest {
         }
     }
 
+    @Test
+    void roundTripsExtendedFrameWithRestartMarkers() throws Exception {
+        int[] samples = new int[17 * 11];
+        for (int i = 0; i < samples.length; i++) {
+            samples[i] = (i * 257 + 11) & 0xfff;
+        }
+
+        JpegFrame decoded = ExtendedJpegCodec.decode(ExtendedJpegCodec.encode(
+                JpegFrame.of(17, 11, 1, samples, 12), 2));
+
+        assertEquals(12, decoded.precision());
+        assertTrue(maxDifference(samples, decoded.samples()) <= 100);
+    }
+
+    private static int maxDifference(int[] expected, int[] actual) {
+        int max = 0;
+        for (int i = 0; i < expected.length; i++) {
+            max = Math.max(max, Math.abs(expected[i] - actual[i]));
+        }
+        return max;
+    }
+
     private static boolean hasMarker(byte[] data, int marker) {
         for (int i = 0; i + 1 < data.length; i++) {
             if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xff) == marker) {

@@ -11,6 +11,10 @@ public final class ExtendedJpegCodec {
         return BaselineJpegCodec.encodeExtended(frame);
     }
 
+    static byte[] encode(JpegFrame frame, int restartInterval) throws IOException {
+        return BaselineJpegCodec.encodeExtended(frame, restartInterval);
+    }
+
     public static JpegFrame decode(byte[] data) throws IOException {
         return BaselineJpegCodec.decodeExtended(data);
     }

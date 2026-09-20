@@ -26,8 +26,8 @@ public final class JpegFrame {
         if (width <= 0 || height <= 0 || (components != 1 && components != 3)) {
             throw new IllegalArgumentException("invalid JPEG frame dimensions/components");
         }
-        if (precision < 8 || precision > 12) {
-            throw new IllegalArgumentException("JPEG precision must be between 8 and 12 bits");
+        if (precision < 8 || precision > 16) {
+            throw new IllegalArgumentException("JPEG precision must be between 8 and 16 bits");
         }
         long expected = (long) width * height * components;
         if (expected > Integer.MAX_VALUE || samples == null || samples.length != expected) {

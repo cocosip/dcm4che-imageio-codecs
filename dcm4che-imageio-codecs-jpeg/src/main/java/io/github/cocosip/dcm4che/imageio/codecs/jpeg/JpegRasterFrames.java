@@ -15,17 +15,28 @@ import io.github.cocosip.dcm4che.imageio.codecs.core.image.DicomImageTypes;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal.JpegFrame;
 
 final class JpegRasterFrames {
+    enum Flavor {
+        BASELINE,
+        EXTENDED,
+        LOSSLESS
+    }
+
     private JpegRasterFrames() {
     }
 
     static JpegFrame fromImage(ImageDescriptor descriptor, RenderedImage image)
             throws IIOException {
-        return fromImage(descriptor, image, false);
+        return fromImage(descriptor, image, Flavor.BASELINE);
     }
 
     static JpegFrame fromImage(ImageDescriptor descriptor, RenderedImage image, boolean extended)
             throws IIOException {
-        validateDescriptor(descriptor, extended);
+        return fromImage(descriptor, image, extended ? Flavor.EXTENDED : Flavor.BASELINE);
+    }
+
+    static JpegFrame fromImage(ImageDescriptor descriptor, RenderedImage image, Flavor flavor)
+            throws IIOException {
+        validateDescriptor(descriptor, flavor);
         Raster raster = image.getData();
         validateImage(descriptor, image.getWidth(), image.getHeight(), raster.getNumBands(),
                 raster.getDataBuffer().getDataType());
@@ -44,7 +55,8 @@ final class JpegRasterFrames {
             }
         }
         return JpegFrame.of(descriptor.getColumns(), descriptor.getRows(),
-                descriptor.getSamples(), samples, extended ? descriptor.getBitsStored() : 8);
+                descriptor.getSamples(), samples,
+                flavor == Flavor.BASELINE ? 8 : descriptor.getBitsStored());
     }
 
     static BufferedImage toImage(ImageDescriptor descriptor, JpegFrame frame, ImageReadParam param)
@@ -54,8 +66,13 @@ final class JpegRasterFrames {
 
     static BufferedImage toImage(ImageDescriptor descriptor, JpegFrame frame, ImageReadParam param,
             boolean extended) throws IIOException {
-        validateDescriptor(descriptor, extended);
-        int expectedPrecision = extended ? descriptor.getBitsStored() : 8;
+        return toImage(descriptor, frame, param, extended ? Flavor.EXTENDED : Flavor.BASELINE);
+    }
+
+    static BufferedImage toImage(ImageDescriptor descriptor, JpegFrame frame, ImageReadParam param,
+            Flavor flavor) throws IIOException {
+        validateDescriptor(descriptor, flavor);
+        int expectedPrecision = flavor == Flavor.BASELINE ? 8 : descriptor.getBitsStored();
         if (frame.precision() != expectedPrecision) {
             throw new IIOException("JPEG precision does not match DICOM BitsStored");
         }
@@ -85,23 +102,28 @@ final class JpegRasterFrames {
         return image;
     }
 
-    private static void validateDescriptor(ImageDescriptor descriptor, boolean extended)
+    private static void validateDescriptor(ImageDescriptor descriptor, Flavor flavor)
             throws IIOException {
         int bitsStored = descriptor.getBitsStored();
-        boolean validPrecision = extended ? bitsStored >= 8 && bitsStored <= 12 : bitsStored <= 8;
-        boolean validAllocation = extended
+        boolean baseline = flavor == Flavor.BASELINE;
+        boolean validPrecision = baseline
+                ? bitsStored <= 8
+                : bitsStored >= 8 && bitsStored <= (flavor == Flavor.LOSSLESS ? 16 : 12);
+        boolean validAllocation = !baseline
                 ? descriptor.getBitsAllocated() == (bitsStored <= 8 ? 8 : 16)
                 : descriptor.getBitsAllocated() == 8;
         if (!validAllocation || !validPrecision
                 || (descriptor.getSamples() != 1 && descriptor.getSamples() != 3)
-                || (extended && descriptor.isSigned())) {
-            throw new IIOException(extended
-                    ? "JPEG Extended requires unsigned 8-12 bit monochrome or RGB pixels"
+                || (!baseline && descriptor.isSigned())) {
+            throw new IIOException(!baseline
+                    ? flavor == Flavor.LOSSLESS
+                    ? "JPEG Lossless requires unsigned 8-16 bit monochrome or RGB pixels"
+                    : "JPEG Extended requires unsigned 8-12 bit monochrome or RGB pixels"
                     : "JPEG Baseline requires 8-bit monochrome or RGB pixels");
         }
         String photometric = String.valueOf(descriptor.getPhotometricInterpretation());
         if ("YBR_FULL_422".equals(photometric)) {
-            throw new IIOException("JPEG Baseline does not support YBR_FULL_422");
+            throw new IIOException("JPEG does not support YBR_FULL_422");
         }
     }
 

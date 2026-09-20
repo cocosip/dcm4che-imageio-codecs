@@ -98,6 +98,10 @@ class JpegImageIoTest {
                 new ExtendedJpegImageReaderSpi().createReaderInstance());
         assertInstanceOf(ExtendedJpegImageWriter.class,
                 new ExtendedJpegImageWriterSpi().createWriterInstance());
+        assertInstanceOf(LosslessJpegImageReader.class,
+                new LosslessJpegImageReaderSpi().createReaderInstance());
+        assertInstanceOf(LosslessJpegImageWriter.class,
+                new LosslessJpegImageWriterSpi().createWriterInstance());
     }
 
     @Test
@@ -131,6 +135,41 @@ class JpegImageIoTest {
         ImageReadParam param = reader.getDefaultReadParam();
         param.setSourceSubsampling(2, 1, 0, 0);
         assertThrows(Exception.class, () -> reader.read(0, param));
+    }
+
+    @Test
+    void roundTripsSixteenBitLosslessThroughDescriptorBackedImageIo() throws Exception {
+        ImageDescriptor descriptor = descriptor(4, 5, 1, 16, 16, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                source.getRaster().setSample(x, y, 0, (x * 12345 + y * 23456) & 0xffff);
+            }
+        }
+
+        byte[] encoded = writeLossless(descriptor, source);
+        BufferedImage decoded = readLossless(descriptor, encoded);
+
+        assertEquals(16, decoded.getColorModel().getComponentSize(0));
+        assertExactSamples(source, decoded);
+    }
+
+    @Test
+    void roundTripsTwelveBitRgbLosslessThroughDescriptorBackedImageIo() throws Exception {
+        ImageDescriptor descriptor = descriptor(4, 5, 3, 16, 12, "RGB");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                source.getRaster().setSample(x, y, 0, (x * 257 + y * 113) & 0xfff);
+                source.getRaster().setSample(x, y, 1, (x * 97 + y * 211) & 0xfff);
+                source.getRaster().setSample(x, y, 2, (x * 31 + y * 307) & 0xfff);
+            }
+        }
+
+        BufferedImage decoded = readLossless(descriptor, writeLossless(descriptor, source));
+
+        assertEquals(12, decoded.getColorModel().getComponentSize(0));
+        assertExactSamples(source, decoded);
     }
 
     private static byte[] write(ImageDescriptor descriptor, BufferedImage image) throws Exception {
@@ -167,6 +206,24 @@ class JpegImageIoTest {
         return reader.read(0);
     }
 
+    private static byte[] writeLossless(ImageDescriptor descriptor, BufferedImage image)
+            throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DescriptorOutputStream output = new DescriptorOutputStream(bytes, descriptor);
+        LosslessJpegImageWriter writer = new LosslessJpegImageWriter(null);
+        writer.setOutput(output);
+        writer.write(null, new IIOImage(image, null, null), writer.getDefaultWriteParam());
+        output.flush();
+        return bytes.toByteArray();
+    }
+
+    private static BufferedImage readLossless(ImageDescriptor descriptor, byte[] encoded)
+            throws Exception {
+        LosslessJpegImageReader reader = new LosslessJpegImageReader(null);
+        reader.setInput(new DescriptorInputStream(encoded, descriptor));
+        return reader.read(0);
+    }
+
     private static void assertJpegTolerance(BufferedImage expected, BufferedImage actual, int tolerance) {
         for (int y = 0; y < expected.getHeight(); y++) {
             for (int x = 0; x < expected.getWidth(); x++) {
@@ -182,6 +239,18 @@ class JpegImageIoTest {
 
     private static ImageDescriptor descriptor(int rows, int columns, int samples, String photometric) {
         return descriptor(rows, columns, samples, 8, 8, photometric);
+    }
+
+    private static void assertExactSamples(BufferedImage expected, BufferedImage actual) {
+        for (int y = 0; y < expected.getHeight(); y++) {
+            for (int x = 0; x < expected.getWidth(); x++) {
+                for (int band = 0; band < expected.getRaster().getNumBands(); band++) {
+                    assertEquals(expected.getRaster().getSample(x, y, band),
+                            actual.getRaster().getSample(x, y, band),
+                            "sample differs at " + x + "," + y + "," + band);
+                }
+            }
+        }
     }
 
     private static ImageDescriptor descriptor(int rows, int columns, int samples,

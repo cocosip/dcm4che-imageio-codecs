@@ -102,6 +102,10 @@ class JpegImageIoTest {
                 new LosslessJpegImageReaderSpi().createReaderInstance());
         assertInstanceOf(LosslessJpegImageWriter.class,
                 new LosslessJpegImageWriterSpi().createWriterInstance());
+        assertInstanceOf(LosslessJpegSv1ImageReader.class,
+                new LosslessJpegSv1ImageReaderSpi().createReaderInstance());
+        assertInstanceOf(LosslessJpegSv1ImageWriter.class,
+                new LosslessJpegSv1ImageWriterSpi().createWriterInstance());
     }
 
     @Test
@@ -170,6 +174,28 @@ class JpegImageIoTest {
 
         assertEquals(12, decoded.getColorModel().getComponentSize(0));
         assertExactSamples(source, decoded);
+    }
+
+    @Test
+    void roundTripsSv1LosslessThroughDescriptorBackedImageIo() throws Exception {
+        ImageDescriptor descriptor = descriptor(4, 5, 1, 8, 8, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                source.getRaster().setSample(x, y, 0, (x * 31 + y * 17) & 0xff);
+            }
+        }
+
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DescriptorOutputStream output = new DescriptorOutputStream(bytes, descriptor);
+        LosslessJpegSv1ImageWriter writer = new LosslessJpegSv1ImageWriter(null);
+        writer.setOutput(output);
+        writer.write(null, new IIOImage(source, null, null), writer.getDefaultWriteParam());
+        output.flush();
+
+        LosslessJpegSv1ImageReader reader = new LosslessJpegSv1ImageReader(null);
+        reader.setInput(new DescriptorInputStream(bytes.toByteArray(), descriptor));
+        assertExactSamples(source, reader.read(0));
     }
 
     private static byte[] write(ImageDescriptor descriptor, BufferedImage image) throws Exception {

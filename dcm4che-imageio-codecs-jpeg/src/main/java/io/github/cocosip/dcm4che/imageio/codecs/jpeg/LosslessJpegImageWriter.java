@@ -14,7 +14,7 @@ import io.github.cocosip.dcm4che.imageio.codecs.core.spi.AbstractDicomImageWrite
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal.JpegFrame;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal.LosslessJpegCodec;
 
-public final class LosslessJpegImageWriter extends AbstractDicomImageWriter {
+public class LosslessJpegImageWriter extends AbstractDicomImageWriter {
     public LosslessJpegImageWriter(ImageWriterSpi provider) {
         super(provider);
     }

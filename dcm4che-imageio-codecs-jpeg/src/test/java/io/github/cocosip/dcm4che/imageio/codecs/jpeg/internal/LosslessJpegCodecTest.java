@@ -2,6 +2,7 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,14 @@ class LosslessJpegCodecTest {
 
         assertEquals(16, decoded.precision());
         assertArrayEquals(samples, decoded.samples());
+    }
+
+    @Test
+    void sv1DecodeRejectsNonFirstPredictor() throws Exception {
+        JpegFrame source = JpegFrame.of(2, 2, 1, new int[] {1, 2, 3, 4}, 8);
+        byte[] encoded = LosslessJpegCodec.encode(source, 2);
+
+        assertThrows(JpegException.class, () -> LosslessJpegCodec.decode(encoded, 1));
     }
 
     private static boolean hasMarker(byte[] data, int marker) {

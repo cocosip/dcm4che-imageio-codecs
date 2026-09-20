@@ -13,9 +13,16 @@ import io.github.cocosip.dcm4che.imageio.codecs.core.spi.AbstractDicomImageReade
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal.JpegFrame;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal.LosslessJpegCodec;
 
-public final class LosslessJpegImageReader extends AbstractDicomImageReader {
+public class LosslessJpegImageReader extends AbstractDicomImageReader {
+    private final int expectedPredictor;
+
     public LosslessJpegImageReader(ImageReaderSpi provider) {
+        this(provider, 0);
+    }
+
+    protected LosslessJpegImageReader(ImageReaderSpi provider, int expectedPredictor) {
         super(provider);
+        this.expectedPredictor = expectedPredictor;
     }
 
     @Override
@@ -23,7 +30,7 @@ public final class LosslessJpegImageReader extends AbstractDicomImageReader {
             ImageInputStream input, ImageReadParam param) throws IOException {
         byte[] encoded = JpegImageReader.readRemaining(input);
         try {
-            JpegFrame frame = LosslessJpegCodec.decode(encoded);
+            JpegFrame frame = LosslessJpegCodec.decode(encoded, expectedPredictor);
             return JpegRasterFrames.toImage(descriptor, frame, param,
                     JpegRasterFrames.Flavor.LOSSLESS);
         } catch (IIOException e) {

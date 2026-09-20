@@ -320,7 +320,7 @@ the authoritative status for the code currently in the repository:
 | JDK interoperability | Verified for covered subset | JDK-generated baseline grayscale JPEG can be decoded; Baseline and 8-bit Extended writer output can be decoded by the JDK JPEG reader. |
 | JPEG Extended Process 2/4 `.51` | Implemented | Pure Java SOF1 sequential Huffman path supports unsigned 8/12-bit SF444 samples, with dedicated ImageIO SPI and descriptor-backed 16-bit container handling. |
 | JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding supports unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, and predictor 1 encoding; DRI/RST and point transforms are not implemented. |
-| JPEG Lossless Process 14 SV1 `.70` | Not implemented | Fixed predictor-1 lossless path is not present. |
+| JPEG Lossless Process 14 SV1 `.70` | Implemented | Dedicated ImageIO adapters enforce the fixed predictor-1 Process 14 SV1 contract; point transforms and restart intervals remain pending. |
 | Progressive JPEG | Not implemented | Progressive SOF markers are rejected. |
 | Arithmetic-coded JPEG | Not implemented | Arithmetic entropy coding is rejected. |
 | Restart intervals (`DRI`/`RST`) | Not implemented | Restart marker state and interval validation are not present. |
@@ -331,8 +331,8 @@ the authoritative status for the code currently in the repository:
 
 The implemented subset is therefore suitable for Baseline `.50` 8-bit, Extended `.51`
 unsigned 8/12-bit monochrome/RGB SF444, and Lossless `.57` unsigned 8/12/16-bit
-monochrome/RGB paths. Registration for `.70` must not be added until its SV1-specific
-contract and interoperability tests exist.
+monochrome/RGB paths. `.70` is registered through dedicated SV1 reader/writer adapters;
+point transforms and restart intervals remain pending.
 
 ### 6.3 JPEG-LS Family
 
@@ -703,11 +703,11 @@ dcm4che-imageio-codecs/
 - License: Apache 2.0.
 - Version management: `${revision}` in parent POM + `flatten-maven-plugin`.
 - Development order decided (core → rle → jpeg → jpegls → jpeg2000).
-- Core, RLE, and the JPEG module's Baseline Process 1, Extended Process 2/4, and
-  Lossless Process 14 slices are implemented;
+- Core, RLE, and the JPEG module's Baseline Process 1, Extended Process 2/4,
+  Lossless Process 14, and Lossless Process 14 SV1 slices are implemented;
 - The JPEG status matrix in Section 6.2 is the source of truth: Baseline
-  Process 1 `.50`, Extended Process 2/4 `.51`, and Lossless Process 14 `.57` are
-  registered; `.70` remains unimplemented and unregistered.
+  Process 1 `.50`, Extended Process 2/4 `.51`, Lossless Process 14 `.57`, and
+  Lossless Process 14 SV1 `.70` are registered.
 - JPEG-LS and JPEG 2000/HTJ2K modules remain scaffolds without codec code.
 - Two minor open questions remain (see Section 9).
 

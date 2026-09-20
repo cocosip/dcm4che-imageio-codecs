@@ -55,7 +55,14 @@ public final class LosslessJpegCodec {
     }
 
     public static JpegFrame decode(byte[] data) throws IOException {
+        return decode(data, 0);
+    }
+
+    public static JpegFrame decode(byte[] data, int expectedPredictor) throws IOException {
         ParsedFrame parsed = parse(data);
+        if (expectedPredictor != 0 && parsed.predictor != expectedPredictor) {
+            throw new JpegException("JPEG Lossless predictor does not match the requested process");
+        }
         int[] samples = new int[parsed.width * parsed.height * parsed.components];
         MemoryCacheImageInputStream entropyInput = new MemoryCacheImageInputStream(
                 new ByteArrayInputStream(parsed.entropy));

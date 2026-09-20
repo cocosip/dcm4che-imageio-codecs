@@ -300,6 +300,39 @@ Key design points:
 **dcm4che status**: dcm4che maps `.50/.51/.57/.70` to `NativeImageReader` via opencv.
 This project replaces that mapping.
 
+#### JPEG implementation status in this repository
+
+The current `dcm4che-imageio-codecs-jpeg` module implements only the first
+Baseline Process 1 slice. The following matrix is the authoritative status for
+the code currently in the repository:
+
+| Capability | Status | Details |
+|---|---|---|
+| Baseline transfer syntax `.50` (`1.2.840.10008.1.2.4.50`) | Implemented | Pure Java encoder/decoder and dcm4che reader/writer properties are present. |
+| 8-bit precision | Implemented | SOF0 only; samples are stored as unsigned 8-bit values. |
+| Sequential Huffman coding | Implemented | DCT, quantization, zig-zag, DC differential coding, AC run-length coding, byte stuffing, DQT/DHT/SOS/EOI handling. |
+| Grayscale | Implemented | `SamplesPerPixel=1`, `MONOCHROME1` and `MONOCHROME2`; `MONOCHROME1` is inverted at the image boundary. |
+| Three-component RGB | Implemented | `SamplesPerPixel=3` with interleaved 1x1 component sampling. |
+| `YBR_FULL` metadata | Partially implemented | Component samples are carried through; no YCbCr-to-RGB color conversion is performed yet. |
+| `YBR_FULL_422` | Not implemented | Explicitly rejected because 4:2:2 sampling/resampling is not implemented. |
+| ImageIO SPI | Implemented | Reader/writer SPI service entries and the `jpeg-ext` format name are registered. |
+| Descriptor-backed dcm4che streams | Implemented | Uses the existing `ImageDescriptor` stream contract and reads/writes one logical frame per invocation. |
+| JDK interoperability | Verified for covered subset | JDK-generated baseline grayscale JPEG can be decoded; writer output can be decoded by the JDK JPEG reader. |
+| JPEG Extended Process 2/4 `.51` | Not implemented | 12-bit precision and any non-baseline SOF are rejected. |
+| JPEG Lossless Process 14 `.57` | Not implemented | Predictive Huffman coding is not present. |
+| JPEG Lossless Process 14 SV1 `.70` | Not implemented | Fixed predictor-1 lossless path is not present. |
+| Progressive JPEG | Not implemented | Progressive SOF markers are rejected. |
+| Arithmetic-coded JPEG | Not implemented | Arithmetic entropy coding is rejected. |
+| Restart intervals (`DRI`/`RST`) | Not implemented | Restart marker state and interval validation are not present. |
+| CMYK/YCCK JPEG | Not implemented | Component counts and color models outside the covered 1/3-component path are rejected. |
+| ImageReadParam regions/subsampling/band selection | Not implemented | The reader explicitly rejects these options. |
+| Writer quality/compression parameters | Not implemented | Explicit compression mode/quality requests are rejected; the writer uses fixed quantization tables. |
+| Multi-frame orchestration | Not implemented in this module | The current core exposes one logical frame per ImageIO invocation; dcm4che remains responsible for frame orchestration. |
+
+The implemented subset is therefore suitable for Baseline `.50` 8-bit
+monochrome/RGB paths only. Registration for `.51`, `.57`, and `.70` must not be
+added until their codec implementations and interoperability tests exist.
+
 ### 6.3 JPEG-LS Family
 
 **Complexity**: Medium. ISO 14495-1. More specialized than baseline JPEG but well-defined.
@@ -669,7 +702,11 @@ dcm4che-imageio-codecs/
 - License: Apache 2.0.
 - Version management: `${revision}` in parent POM + `flatten-maven-plugin`.
 - Development order decided (core → rle → jpeg → jpegls → jpeg2000).
-- **No codec implementation code written yet.**
+- Core, RLE, and the JPEG module's Baseline Process 1 slice are implemented;
+- The JPEG status matrix in Section 6.2 is the source of truth: only Baseline
+  Process 1 `.50` is registered, while `.51`, `.57`, and `.70` remain
+  unimplemented and unregistered.
+- JPEG-LS and JPEG 2000/HTJ2K modules remain scaffolds without codec code.
 - Two minor open questions remain (see Section 9).
 
 ---

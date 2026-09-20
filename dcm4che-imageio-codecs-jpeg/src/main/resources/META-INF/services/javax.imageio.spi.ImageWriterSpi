@@ -1,6 +1,7 @@
 # uncomment when implemented
 #io.github.cocosip.dcm4che.imageio.codecs.jpeg.JpegImageWriterSpi
 io.github.cocosip.dcm4che.imageio.codecs.jpeg.JpegImageWriterSpi
+io.github.cocosip.dcm4che.imageio.codecs.jpeg.ProgressiveJpegImageWriterSpi
 io.github.cocosip.dcm4che.imageio.codecs.jpeg.ExtendedJpegImageWriterSpi
 io.github.cocosip.dcm4che.imageio.codecs.jpeg.LosslessJpegImageWriterSpi
 io.github.cocosip.dcm4che.imageio.codecs.jpeg.LosslessJpegSv1ImageWriterSpi

@@ -45,6 +45,21 @@ class JpegImageIoTest {
     }
 
     @Test
+    void roundTripsProgressiveMonochromeThroughDescriptorBackedImageIo() throws Exception {
+        ImageDescriptor descriptor = descriptor(9, 10, 1, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                source.getRaster().setSample(x, y, 0, (x * 19 + y * 7) & 0xff);
+            }
+        }
+
+        BufferedImage decoded = readProgressive(descriptor, writeProgressive(descriptor, source));
+
+        assertJpegTolerance(source, decoded, 80);
+    }
+
+    @Test
     void invertsMonochrome1AtTheImageBoundary() throws Exception {
         ImageDescriptor descriptor = descriptor(1, 1, 1, "MONOCHROME1");
         BufferedImage source = DicomImageTypes.createImage(descriptor);
@@ -94,6 +109,10 @@ class JpegImageIoTest {
     void exposesPairedImageIoSpis() throws Exception {
         assertInstanceOf(JpegImageReader.class, new JpegImageReaderSpi().createReaderInstance());
         assertInstanceOf(JpegImageWriter.class, new JpegImageWriterSpi().createWriterInstance());
+        assertInstanceOf(ProgressiveJpegImageReader.class,
+                new ProgressiveJpegImageReaderSpi().createReaderInstance());
+        assertInstanceOf(ProgressiveJpegImageWriter.class,
+                new ProgressiveJpegImageWriterSpi().createWriterInstance());
         assertInstanceOf(ExtendedJpegImageReader.class,
                 new ExtendedJpegImageReaderSpi().createReaderInstance());
         assertInstanceOf(ExtendedJpegImageWriter.class,
@@ -210,6 +229,24 @@ class JpegImageIoTest {
 
     private static BufferedImage read(ImageDescriptor descriptor, byte[] encoded) throws Exception {
         JpegImageReader reader = new JpegImageReader(null);
+        reader.setInput(new DescriptorInputStream(encoded, descriptor));
+        return reader.read(0);
+    }
+
+    private static byte[] writeProgressive(ImageDescriptor descriptor, BufferedImage image)
+            throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DescriptorOutputStream output = new DescriptorOutputStream(bytes, descriptor);
+        ProgressiveJpegImageWriter writer = new ProgressiveJpegImageWriter(null);
+        writer.setOutput(output);
+        writer.write(null, new IIOImage(image, null, null), writer.getDefaultWriteParam());
+        output.flush();
+        return bytes.toByteArray();
+    }
+
+    private static BufferedImage readProgressive(ImageDescriptor descriptor, byte[] encoded)
+            throws Exception {
+        ProgressiveJpegImageReader reader = new ProgressiveJpegImageReader(null);
         reader.setInput(new DescriptorInputStream(encoded, descriptor));
         return reader.read(0);
     }

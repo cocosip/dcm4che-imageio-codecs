@@ -57,7 +57,7 @@
 
         <!-- ── Compiler ───────────────────────────────────────────────────────── -->
         <!-- Aligned with dcm4che 5.35.1 (Java 8 bytecode).
-             --release also guards against accidental use of post-Java-8 APIs. -->
+             The release setting also guards against accidental use of post-Java-8 APIs. -->
         <maven.compiler.release>8</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>

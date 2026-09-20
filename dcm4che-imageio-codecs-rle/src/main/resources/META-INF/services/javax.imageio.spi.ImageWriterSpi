@@ -1,2 +1,1 @@
-# uncomment when implemented
-#io.github.cocosip.dcm4che.imageio.codecs.rle.RleImageWriterSpi
+io.github.cocosip.dcm4che.imageio.codecs.rle.RleImageWriterSpi

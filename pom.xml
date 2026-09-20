@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.cocosip</groupId>
+    <artifactId>dcm4che-imageio-codecs-parent</artifactId>
+    <!-- Version is set here only. All modules inherit ${revision}.
+         Change this single property to bump the version across the entire project. -->
+    <version>${revision}</version>
+    <packaging>pom</packaging>
+
+    <name>dcm4che ImageIO Codecs (Parent)</name>
+    <description>
+        Pure Java image codec plugins for dcm4che, providing DICOM transfer syntax support
+        (JPEG, JPEG-LS, JPEG 2000, HTJ2K, RLE) via the standard javax.imageio SPI mechanism.
+        Analogous to fo-dicom.PureCodecs for dcm4che. No native/JNI dependencies.
+    </description>
+    <url>https://github.com/cocosip/dcm4che-imageio-codecs</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>cocosip</id>
+            <name>cocosip</name>
+            <url>https://github.com/cocosip</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/cocosip/dcm4che-imageio-codecs.git</connection>
+        <developerConnection>scm:git:git@github.com:cocosip/dcm4che-imageio-codecs.git</developerConnection>
+        <url>https://github.com/cocosip/dcm4che-imageio-codecs</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <modules>
+        <module>dcm4che-imageio-codecs-core</module>
+        <module>dcm4che-imageio-codecs-rle</module>
+        <module>dcm4che-imageio-codecs-jpeg</module>
+        <module>dcm4che-imageio-codecs-jpegls</module>
+        <module>dcm4che-imageio-codecs-jpeg2000</module>
+    </modules>
+
+    <properties>
+        <!-- ── Version (single source of truth) ──────────────────────────────── -->
+        <!-- To release: mvn versions:set -DnewVersion=1.0.0  (or set here directly) -->
+        <revision>1.0.0-SNAPSHOT</revision>
+
+        <!-- ── Compiler ───────────────────────────────────────────────────────── -->
+        <!-- Aligned with dcm4che 5.35.1 (Java 8 bytecode).
+             --release also guards against accidental use of post-Java-8 APIs. -->
+        <maven.compiler.release>8</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- ── Dependency versions ────────────────────────────────────────────── -->
+        <dcm4che.version>5.35.1</dcm4che.version>
+        <junit.version>5.10.2</junit.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- dcm4che: imageio core (ImageReaderFactory, ImageDescriptor, SegmentedInputImageStream) -->
+            <dependency>
+                <groupId>org.dcm4che</groupId>
+                <artifactId>dcm4che-imageio</artifactId>
+                <version>${dcm4che.version}</version>
+            </dependency>
+
+            <!-- dcm4che: DICOM Attributes, Tag constants -->
+            <dependency>
+                <groupId>org.dcm4che</groupId>
+                <artifactId>dcm4che-core</artifactId>
+                <version>${dcm4che.version}</version>
+            </dependency>
+
+            <!-- Internal: core module (shared by all codec modules) -->
+            <dependency>
+                <groupId>io.github.cocosip</groupId>
+                <artifactId>dcm4che-imageio-codecs-core</artifactId>
+                <version>${revision}</version>
+            </dependency>
+
+            <!-- Test -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <id>dcm4che</id>
+            <name>dcm4che Repository</name>
+            <url>https://www.dcm4che.org/maven2</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>3.3.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>3.6.3</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-gpg-plugin</artifactId>
+                    <version>3.2.4</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <!-- flatten-maven-plugin: resolves ${revision} in installed/published POMs.
+                 Without this, published POM files would contain literal "${revision}" instead
+                 of the actual version, which breaks consumers. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.6.0</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                    <!-- resolveCiFriendliesOnly: only resolves ${revision}/${sha1}/${changelist},
+                         leaves everything else untouched (keeps parent, dependencies, etc.) -->
+                    <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>flatten</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>flatten.clean</id>
+                        <phase>clean</phase>
+                        <goals><goal>clean</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!-- ── Release profile ──────────────────────────────────────────────────────
+         Activated with: mvn deploy -P release
+         Generates sources jar, Javadoc jar, and GPG signatures — all required
+         by Maven Central. Configure server credentials in ~/.m2/settings.xml:
+           <server><id>central</id><username>TOKEN_USER</username><password>TOKEN_PASS</password></server>
+    ──────────────────────────────────────────────────────────────────────────── -->
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals><goal>jar-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals><goal>jar</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals><goal>sign</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- Maven Central Portal publishing (new approach, replacing OSSRH) -->
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.6.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <!-- autoPublish=false: upload to staging, review manually before release -->
+                            <autoPublish>false</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

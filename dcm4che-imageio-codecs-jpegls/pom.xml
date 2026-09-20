@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.cocosip</groupId>
+        <artifactId>dcm4che-imageio-codecs-parent</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>dcm4che-imageio-codecs-jpegls</artifactId>
+    <name>dcm4che ImageIO Codecs - JPEG-LS</name>
+    <description>
+        Pure Java JPEG-LS codec for dcm4che (ISO/IEC 14495-1).
+        Transfer syntaxes:
+          - JPEG-LS Lossless      (1.2.840.10008.1.2.4.80)
+          - JPEG-LS Near-Lossless (1.2.840.10008.1.2.4.81)
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.cocosip</groupId>
+            <artifactId>dcm4che-imageio-codecs-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

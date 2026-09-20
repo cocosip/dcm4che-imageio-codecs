@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.cocosip</groupId>
+        <artifactId>dcm4che-imageio-codecs-parent</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>dcm4che-imageio-codecs-rle</artifactId>
+    <name>dcm4che ImageIO Codecs - RLE</name>
+    <description>
+        Pure Java RLE Lossless codec for dcm4che.
+        Transfer syntax: RLE Lossless (1.2.840.10008.1.2.5).
+        Algorithm: DICOM PackBits variant — 64-byte frame header, up to 15 segments,
+        MSB-first byte ordering within each sample segment.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.cocosip</groupId>
+            <artifactId>dcm4che-imageio-codecs-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

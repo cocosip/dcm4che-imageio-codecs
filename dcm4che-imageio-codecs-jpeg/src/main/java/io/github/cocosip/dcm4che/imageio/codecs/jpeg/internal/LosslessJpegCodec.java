@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 
 import javax.imageio.stream.ImageInputStream;
-import javax.imageio.stream.ImageOutputStream;
 import javax.imageio.stream.MemoryCacheImageInputStream;
 import javax.imageio.stream.MemoryCacheImageOutputStream;
 
@@ -21,12 +20,18 @@ public final class LosslessJpegCodec {
     }
 
     public static byte[] encode(JpegFrame frame, int predictor) throws IOException {
-        return encode(frame, predictor, 0);
+        return encode(frame, predictor, 0, 0);
     }
 
     public static byte[] encode(JpegFrame frame, int predictor, int restartInterval)
             throws IOException {
-        validateFrame(frame, predictor, restartInterval);
+        return encode(frame, predictor, restartInterval, 0);
+    }
+
+    public static byte[] encode(JpegFrame frame, int predictor, int restartInterval,
+            int pointTransform) throws IOException {
+        validateFrame(frame, predictor, restartInterval, pointTransform);
+        int transformedPrecision = frame.precision() - pointTransform;
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
@@ -37,7 +42,8 @@ public final class LosslessJpegCodec {
             JpegMarkerWriter.write(output, 0xdd, new byte[] {
                     (byte) (restartInterval >>> 8), (byte) restartInterval});
         }
-        JpegMarkerWriter.write(output, 0xda, scanHeader(frame.components(), predictor));
+        JpegMarkerWriter.write(output, 0xda, scanHeader(frame.components(), predictor,
+                pointTransform));
 
         BitWriter bits = new BitWriter(output);
         int[] reconstructed = new int[frame.width() * frame.height() * frame.components()];
@@ -56,10 +62,10 @@ public final class LosslessJpegCodec {
                 }
                 for (int component = 0; component < frame.components(); component++) {
                     int index = indexOf(frame.width(), frame.components(), x, y, component);
-                    int sample = frame.sample(x, y, component);
+                    int sample = frame.sample(x, y, component) >>> pointTransform;
                     int difference = normalizeDifference(sample
                             - predict(reconstructed, frame.width(), frame.components(), x, y,
-                                    component, frame.precision(), predictor, restartStartMcu));
+                                    component, transformedPrecision, predictor, restartStartMcu));
                     int category = category(difference);
                     HuffmanCodec.encodeSymbol(bits, DEFAULT_HUFFMAN, category);
                     if (category > 0 && category != 16) {
@@ -86,10 +92,12 @@ public final class LosslessJpegCodec {
             throw new JpegException("JPEG Lossless predictor does not match the requested process");
         }
         int[] samples = new int[parsed.width * parsed.height * parsed.components];
+        int[] transformedSamples = new int[samples.length];
         int totalMcu = parsed.width * parsed.height;
         int mcu = 0;
         int restartStartMcu = 0;
         int restartIndex = 0;
+        int transformedPrecision = parsed.precision - parsed.pointTransform;
         for (int segmentIndex = 0; segmentIndex < parsed.entropySegments.size(); segmentIndex++) {
             int segmentEnd = parsed.restartInterval == 0
                     ? totalMcu
@@ -102,19 +110,24 @@ public final class LosslessJpegCodec {
                 int x = mcu % parsed.width;
                 for (int component = 0; component < parsed.components; component++) {
                     int category = HuffmanCodec.decodeSymbol(bits, parsed.huffman);
-                    if (category > parsed.precision + 1 || category == 16 && parsed.precision < 16) {
+                    if (category > transformedPrecision + 1
+                            || category == 16 && transformedPrecision < 16) {
                         throw new JpegException("invalid JPEG Lossless difference category");
                     }
                     int difference = category == 0 ? 0
                             : category == 16 ? 1 << 15
                             : readAmplitude(bits, category);
-                    int prediction = predict(samples, parsed.width, parsed.components, x, y,
-                            component, parsed.precision, parsed.predictor, restartStartMcu);
-                    int sample = normalizeSample(prediction + difference, parsed.precision);
+                    int prediction = predict(transformedSamples, parsed.width, parsed.components, x, y,
+                            component, transformedPrecision, parsed.predictor, restartStartMcu);
+                    int transformedSample = normalizeSample(prediction + difference,
+                            transformedPrecision);
+                    int sample = transformedSample << parsed.pointTransform;
                     if (sample < 0 || sample > (1 << parsed.precision) - 1) {
                         throw new JpegException("JPEG Lossless sample is outside precision range");
                     }
-                    samples[indexOf(parsed.width, parsed.components, x, y, component)] = sample;
+                    int index = indexOf(parsed.width, parsed.components, x, y, component);
+                    transformedSamples[index] = transformedSample;
+                    samples[index] = sample;
                 }
                 mcu++;
             }
@@ -134,7 +147,8 @@ public final class LosslessJpegCodec {
                 parsed.precision);
     }
 
-    private static void validateFrame(JpegFrame frame, int predictor, int restartInterval) {
+    private static void validateFrame(JpegFrame frame, int predictor, int restartInterval,
+            int pointTransform) {
         if (frame == null) {
             throw new NullPointerException("frame");
         }
@@ -146,6 +160,9 @@ public final class LosslessJpegCodec {
         }
         if (restartInterval < 0 || restartInterval > 0xffff) {
             throw new IllegalArgumentException("JPEG Lossless restart interval must fit in 16 bits");
+        }
+        if (pointTransform < 0 || pointTransform >= frame.precision()) {
+            throw new IllegalArgumentException("JPEG Lossless point transform must be below precision");
         }
     }
 
@@ -165,7 +182,7 @@ public final class LosslessJpegCodec {
         return payload;
     }
 
-    private static byte[] scanHeader(int components, int predictor) {
+    private static byte[] scanHeader(int components, int predictor, int pointTransform) {
         byte[] payload = new byte[4 + components * 2];
         payload[0] = (byte) components;
         for (int component = 0; component < components; component++) {
@@ -173,7 +190,7 @@ public final class LosslessJpegCodec {
             payload[2 + component * 2] = 0;
         }
         payload[payload.length - 3] = (byte) predictor;
-        payload[payload.length - 2] = 0;
+        payload[payload.length - 2] = (byte) pointTransform;
         payload[payload.length - 1] = 0;
         return payload;
     }
@@ -251,14 +268,18 @@ public final class LosslessJpegCodec {
                 if (componentIds == null || !huffman.containsKey(0)) {
                     throw new JpegException("JPEG Lossless scan is missing SOF3 or DHT");
                 }
-                int predictor = parseScan(payload, componentIds, components);
+                ScanParameters scanParameters = parseScan(payload, componentIds, components);
+                if (scanParameters.pointTransform >= precision) {
+                    throw new JpegException("JPEG Lossless point transform exceeds precision");
+                }
                 ScanData scan = readScan(input);
                 JpegMarker end = markers.next();
                 if (end.code() != 0xd9) {
                     throw new JpegException("JPEG Lossless frame does not end with EOI");
                 }
-                return new ParsedFrame(width, height, precision, components, predictor,
-                        huffman.get(0), restartInterval, scan.entropySegments,
+                return new ParsedFrame(width, height, precision, components,
+                        scanParameters.predictor, scanParameters.pointTransform, huffman.get(0),
+                        restartInterval, scan.entropySegments,
                         scan.restartMarkers);
             } else if ((code >= 0xe0 && code <= 0xef) || code == 0xfe) {
                 // APPn and COM metadata are not part of the predictive scan.
@@ -331,7 +352,7 @@ public final class LosslessJpegCodec {
         }
     }
 
-    private static int parseScan(byte[] payload, int[] componentIds, int components) {
+    private static ScanParameters parseScan(byte[] payload, int[] componentIds, int components) {
         if (payload.length != 4 + components * 2 || (payload[0] & 0xff) != components) {
             throw new IllegalArgumentException("invalid JPEG Lossless SOS header");
         }
@@ -342,11 +363,12 @@ public final class LosslessJpegCodec {
             }
         }
         int predictor = payload[payload.length - 3] & 0xff;
-        if (predictor < 1 || predictor > 7 || payload[payload.length - 2] != 0
-                || payload[payload.length - 1] != 0) {
+        int pointTransform = payload[payload.length - 2] & 0xff;
+        if (predictor < 1 || predictor > 7 || payload[payload.length - 1] != 0
+                || pointTransform >= 16) {
             throw new IllegalArgumentException("unsupported JPEG Lossless scan parameters");
         }
-        return predictor;
+        return new ScanParameters(predictor, pointTransform);
     }
 
     private static int predict(int[] samples, int width, int components, int x, int y,
@@ -426,25 +448,38 @@ public final class LosslessJpegCodec {
         }
     }
 
+    private static final class ScanParameters {
+        private final int predictor;
+        private final int pointTransform;
+
+        private ScanParameters(int predictor, int pointTransform) {
+            this.predictor = predictor;
+            this.pointTransform = pointTransform;
+        }
+    }
+
     private static final class ParsedFrame {
         private final int width;
         private final int height;
         private final int precision;
         private final int components;
         private final int predictor;
+        private final int pointTransform;
         private final HuffmanTable huffman;
         private final int restartInterval;
         private final List<byte[]> entropySegments;
         private final List<Integer> restartMarkers;
 
         private ParsedFrame(int width, int height, int precision, int components, int predictor,
-                HuffmanTable huffman, int restartInterval, List<byte[]> entropySegments,
+                int pointTransform, HuffmanTable huffman, int restartInterval,
+                List<byte[]> entropySegments,
                 List<Integer> restartMarkers) {
             this.width = width;
             this.height = height;
             this.precision = precision;
             this.components = components;
             this.predictor = predictor;
+            this.pointTransform = pointTransform;
             this.huffman = huffman;
             this.restartInterval = restartInterval;
             this.entropySegments = entropySegments;

@@ -50,6 +50,20 @@ class LosslessJpegCodecTest {
     }
 
     @Test
+    void roundTripsLosslessPointTransformForAlignedSamples() throws Exception {
+        int[] samples = new int[5 * 3];
+        for (int i = 0; i < samples.length; i++) {
+            samples[i] = ((i * 37 + 11) & 0x3f) << 2;
+        }
+
+        JpegFrame source = JpegFrame.of(5, 3, 1, samples, 8);
+        byte[] encoded = LosslessJpegCodec.encode(source, 1, 0, 2);
+        JpegFrame decoded = LosslessJpegCodec.decode(encoded);
+
+        assertArrayEquals(samples, decoded.samples());
+    }
+
+    @Test
     void sv1DecodeRejectsNonFirstPredictor() throws Exception {
         JpegFrame source = JpegFrame.of(2, 2, 1, new int[] {1, 2, 3, 4}, 8);
         byte[] encoded = LosslessJpegCodec.encode(source, 2);

@@ -18,31 +18,86 @@ public final class BaselineJpegCodec {
     }
 
     public static byte[] encode(JpegFrame frame) throws IOException {
+        return encode(frame, JpegSampling.SF444, 0);
+    }
+
+    public static byte[] encode(JpegFrame frame, JpegSampling sampling) throws IOException {
+        return encode(frame, sampling, 0);
+    }
+
+    public static byte[] encode(JpegFrame frame, JpegSampling sampling, int restartInterval)
+            throws IOException {
         if (frame.precision() != 8) {
             throw new JpegException("JPEG Baseline requires 8-bit samples");
         }
-        return encode(frame, 0xc0, 0);
+        return encode(frame, 0xc0, sampling, restartInterval, -1.0f);
+    }
+
+    public static byte[] encode(JpegFrame frame, JpegSampling sampling, float quality)
+            throws IOException {
+        if (frame.precision() != 8) {
+            throw new JpegException("JPEG Baseline requires 8-bit samples");
+        }
+        return encode(frame, 0xc0, sampling, 0, quality);
+    }
+
+    public static byte[] encode(JpegFrame frame, JpegSampling sampling, int restartInterval,
+            float quality) throws IOException {
+        if (frame.precision() != 8) {
+            throw new JpegException("JPEG Baseline requires 8-bit samples");
+        }
+        return encode(frame, 0xc0, sampling, restartInterval, quality);
     }
 
     public static byte[] encode(JpegFrame frame, int restartInterval) throws IOException {
-        if (frame.precision() != 8) {
-            throw new JpegException("JPEG Baseline requires 8-bit samples");
-        }
-        return encode(frame, 0xc0, restartInterval);
+        return encode(frame, JpegSampling.SF444, restartInterval);
     }
 
     static byte[] encodeExtended(JpegFrame frame) throws IOException {
-        return encodeExtended(frame, 0);
+        return encodeExtended(frame, JpegSampling.SF444, 0);
     }
 
     static byte[] encodeExtended(JpegFrame frame, int restartInterval) throws IOException {
+        return encodeExtended(frame, JpegSampling.SF444, restartInterval);
+    }
+
+    static byte[] encodeExtended(JpegFrame frame, JpegSampling sampling, int restartInterval)
+            throws IOException {
         if (frame.precision() < 8 || frame.precision() > 12) {
             throw new JpegException("JPEG Extended requires 8-12 bit samples");
         }
-        return encode(frame, 0xc1, restartInterval);
+        return encode(frame, 0xc1, sampling, restartInterval, -1.0f);
     }
 
-    private static byte[] encode(JpegFrame frame, int frameMarker, int restartInterval)
+    static byte[] encodeExtended(JpegFrame frame, JpegSampling sampling, float quality)
+            throws IOException {
+        if (frame.precision() < 8 || frame.precision() > 12) {
+            throw new JpegException("JPEG Extended requires 8-12 bit samples");
+        }
+        return encode(frame, 0xc1, sampling, 0, quality);
+    }
+
+    static byte[] encodeExtended(JpegFrame frame, JpegSampling sampling, int restartInterval,
+            float quality) throws IOException {
+        if (frame.precision() < 8 || frame.precision() > 12) {
+            throw new JpegException("JPEG Extended requires 8-12 bit samples");
+        }
+        return encode(frame, 0xc1, sampling, restartInterval, quality);
+    }
+
+    static byte[] encodeSequential(JpegFrame frame, int frameMarker, JpegSampling sampling,
+            int restartInterval) throws IOException {
+        if (frameMarker != 0xc0 && frameMarker != 0xc1 && frameMarker != 0xc5) {
+            throw new IllegalArgumentException("unsupported sequential JPEG frame marker");
+        }
+        if (frameMarker == 0xc5 && frame.precision() != 8) {
+            throw new JpegException("differential sequential JPEG requires 8-bit samples");
+        }
+        return encode(frame, frameMarker, sampling, restartInterval, -1.0f);
+    }
+
+    private static byte[] encode(JpegFrame frame, int frameMarker, JpegSampling sampling,
+            int restartInterval, float quality)
             throws IOException {
         if (restartInterval < 0 || restartInterval > 0xffff) {
             throw new IllegalArgumentException("JPEG restart interval must fit in 16 bits");
@@ -51,11 +106,13 @@ public final class BaselineJpegCodec {
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
         output.write(0xd8);
-        writeQuantization(output, 0, JpegTables.standardLuminanceQuantization());
+        int[] luminanceQuantization = JpegTables.luminanceQuantization(quality);
+        int[] chrominanceQuantization = JpegTables.chrominanceQuantization(quality);
+        writeQuantization(output, 0, luminanceQuantization);
         if (frame.components() == 3) {
-            writeQuantization(output, 1, JpegTables.standardChrominanceQuantization());
+            writeQuantization(output, 1, chrominanceQuantization);
         }
-        writeFrameHeader(output, frame, frameMarker);
+        writeFrameHeader(output, frame, frameMarker, sampling);
         writeHuffmanTables(output, frame.components());
         if (restartInterval != 0) {
             JpegMarkerWriter.write(output, 0xdd, new byte[] {
@@ -66,14 +123,18 @@ public final class BaselineJpegCodec {
         HuffmanTable[] dc = {JpegTables.standardLuminanceDc(), JpegTables.standardChrominanceDc()};
         HuffmanTable[] ac = {JpegTables.standardLuminanceAc(), JpegTables.standardChrominanceAc()};
         QuantizationTable[] quant = {
-            QuantizationTable.of(JpegTables.standardLuminanceQuantization()),
-            QuantizationTable.of(JpegTables.standardChrominanceQuantization())
+            QuantizationTable.of(luminanceQuantization),
+            QuantizationTable.of(chrominanceQuantization)
         };
         int[] previousDc = new int[frame.components()];
         int restartIndex = 0;
+        int mcusX = (frame.width() + sampling.maxHorizontal() * 8 - 1)
+                / (sampling.maxHorizontal() * 8);
+        int mcusY = (frame.height() + sampling.maxVertical() * 8 - 1)
+                / (sampling.maxVertical() * 8);
         int mcuIndex = 0;
-        for (int by = 0; by < frame.height(); by += 8) {
-            for (int bx = 0; bx < frame.width(); bx += 8) {
+        for (int mcuY = 0; mcuY < mcusY; mcuY++) {
+            for (int mcuX = 0; mcuX < mcusX; mcuX++) {
                 if (restartInterval != 0 && mcuIndex != 0 && mcuIndex % restartInterval == 0) {
                     bits.flush();
                     output.write(0xff);
@@ -82,8 +143,16 @@ public final class BaselineJpegCodec {
                     previousDc = new int[frame.components()];
                 }
                 for (int component = 0; component < frame.components(); component++) {
-                    encodeBlock(bits, frame, bx, by, component, quant[component == 0 ? 0 : 1],
-                            dc[component == 0 ? 0 : 1], ac[component == 0 ? 0 : 1], previousDc, component);
+                    for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
+                        for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
+                            int componentBlockX = mcuX * sampling.horizontal(component) + blockX;
+                            int componentBlockY = mcuY * sampling.vertical(component) + blockY;
+                            encodeBlock(bits, frame, componentBlockX, componentBlockY, component,
+                                    sampling, quant[component == 0 ? 0 : 1],
+                                    dc[component == 0 ? 0 : 1], ac[component == 0 ? 0 : 1],
+                                    previousDc, component);
+                        }
+                    }
                 }
                 mcuIndex++;
             }
@@ -103,6 +172,13 @@ public final class BaselineJpegCodec {
         return decode(data, 0xc1, true);
     }
 
+    static JpegFrame decodeSequential(byte[] data, int frameMarker) throws IOException {
+        if (frameMarker != 0xc0 && frameMarker != 0xc1 && frameMarker != 0xc5) {
+            throw new IllegalArgumentException("unsupported sequential JPEG frame marker");
+        }
+        return decode(data, frameMarker, frameMarker == 0xc1);
+    }
+
     private static JpegFrame decode(byte[] data, int expectedFrameMarker, boolean extended)
             throws IOException {
         if (data == null || data.length < 4) {
@@ -119,6 +195,7 @@ public final class BaselineJpegCodec {
         int precision = 0;
         int components = 0;
         int[] componentIds = null;
+        JpegSampling sampling = null;
         int restartInterval = 0;
         boolean scanSeen = false;
         JpegMarkerReader markers = new JpegMarkerReader(input);
@@ -151,12 +228,24 @@ public final class BaselineJpegCodec {
                     throw new JpegException("invalid JPEG SOF0 frame header");
                 }
                 componentIds = new int[components];
+                int[] horizontal = new int[components];
+                int[] vertical = new int[components];
                 for (int i = 0; i < components; i++) {
                     int offset = 6 + i * 3;
                     componentIds[i] = payload[offset] & 0xff;
-                    if (payload[offset + 1] != 0x11) {
-                        throw new JpegException("JPEG sampling factors other than 1x1 are unsupported");
+                    horizontal[i] = (payload[offset + 1] >>> 4) & 0x0f;
+                    vertical[i] = payload[offset + 1] & 0x0f;
+                    if (horizontal[i] == 0 || vertical[i] == 0) {
+                        throw new JpegException("JPEG sampling factors must be non-zero");
                     }
+                }
+                if (components == 1) {
+                    if (horizontal[0] != 1 || vertical[0] != 1) {
+                        throw new JpegException("JPEG monochrome sampling must be 1x1");
+                    }
+                    sampling = JpegSampling.SF444;
+                } else {
+                    sampling = JpegSampling.fromFactors(horizontal, vertical);
                 }
             } else if (code == 0xda) {
                 if (components == 0 || componentIds == null) {
@@ -165,7 +254,7 @@ public final class BaselineJpegCodec {
                 ScanHeader scan = parseScan(payload, componentIds, components);
                 ScanData entropy = readScan(input);
                 JpegFrame frame = decodeScan(width, height, components, precision, quant, huffman,
-                        scan, restartInterval, entropy);
+                        sampling, scan, restartInterval, entropy);
                 JpegMarker end = markers.next();
                 if (end.code() != 0xd9) {
                     throw new JpegException("JPEG frame does not end with EOI");
@@ -223,7 +312,8 @@ public final class BaselineJpegCodec {
         JpegMarkerWriter.write(output, 0xdb, payload);
     }
 
-    private static void writeFrameHeader(ImageOutputStream output, JpegFrame frame, int marker)
+    private static void writeFrameHeader(ImageOutputStream output, JpegFrame frame, int marker,
+            JpegSampling sampling)
             throws IOException {
         byte[] payload = new byte[6 + frame.components() * 3];
         payload[0] = (byte) frame.precision();
@@ -234,7 +324,8 @@ public final class BaselineJpegCodec {
         payload[5] = (byte) frame.components();
         for (int i = 0; i < frame.components(); i++) {
             payload[6 + i * 3] = (byte) (i + 1);
-            payload[7 + i * 3] = 0x11;
+            payload[7 + i * 3] = (byte) (frame.components() == 1
+                    ? 0x11 : sampling.factorByte(i));
             payload[8 + i * 3] = (byte) (i == 0 ? 0 : 1);
         }
         JpegMarkerWriter.write(output, marker, payload);
@@ -275,16 +366,18 @@ public final class BaselineJpegCodec {
         JpegMarkerWriter.write(output, 0xda, payload);
     }
 
-    private static void encodeBlock(BitWriter bits, JpegFrame frame, int bx, int by, int component,
-            QuantizationTable quant, HuffmanTable dc, HuffmanTable ac, int[] previousDc, int componentIndex)
-            throws IOException {
+    private static void encodeBlock(BitWriter bits, JpegFrame frame, int blockX, int blockY,
+            int component, JpegSampling sampling, QuantizationTable quant, HuffmanTable dc,
+            HuffmanTable ac, int[] previousDc, int componentIndex) throws IOException {
         double[] block = new double[64];
+        int componentWidth = sampling.componentWidth(frame.width(), component);
+        int componentHeight = sampling.componentHeight(frame.height(), component);
         for (int y = 0; y < 8; y++) {
             for (int x = 0; x < 8; x++) {
-                int sourceX = Math.min(frame.width() - 1, bx + x);
-                int sourceY = Math.min(frame.height() - 1, by + y);
-            block[y * 8 + x] = frame.sample(sourceX, sourceY, component)
-                    - (1 << (frame.precision() - 1));
+                int componentX = Math.min(componentWidth - 1, blockX * 8 + x);
+                int componentY = Math.min(componentHeight - 1, blockY * 8 + y);
+                block[y * 8 + x] = componentSample(frame, componentX, componentY, component,
+                        sampling) - (1 << (frame.precision() - 1));
             }
         }
         double[] transformed = JpegDct.forward(block);
@@ -321,15 +414,25 @@ public final class BaselineJpegCodec {
 
     private static JpegFrame decodeScan(int width, int height, int components, int precision,
             Map<Integer, QuantizationTable> quant, Map<Integer, HuffmanTable> huffman,
-            ScanHeader scan, int restartInterval, ScanData entropy) throws IOException {
+            JpegSampling sampling, ScanHeader scan, int restartInterval, ScanData entropy)
+            throws IOException {
         if (width == 0 || height == 0 || !scanSeenTables(quant, huffman, components)) {
             throw new JpegException("JPEG scan is missing required tables");
         }
-        int[] samples = new int[width * height * components];
+        int[][] planes = new int[components][];
+        int[] componentWidths = new int[components];
+        int[] componentHeights = new int[components];
+        for (int component = 0; component < components; component++) {
+            componentWidths[component] = sampling.componentWidth(width, component);
+            componentHeights[component] = sampling.componentHeight(height, component);
+            planes[component] = new int[componentWidths[component] * componentHeights[component]];
+        }
         int[] previousDc = new int[components];
-        int blocksX = (width + 7) / 8;
-        int blocksY = (height + 7) / 8;
-        int totalMcu = blocksX * blocksY;
+        int mcusX = (width + sampling.maxHorizontal() * 8 - 1)
+                / (sampling.maxHorizontal() * 8);
+        int mcusY = (height + sampling.maxVertical() * 8 - 1)
+                / (sampling.maxVertical() * 8);
+        int totalMcu = mcusX * mcusY;
         int mcu = 0;
         int restartIndex = 0;
         for (int segmentIndex = 0; segmentIndex < entropy.entropySegments.size(); segmentIndex++) {
@@ -340,23 +443,31 @@ public final class BaselineJpegCodec {
                     new ByteArrayInputStream(entropy.entropySegments.get(segmentIndex)));
             BitReader bits = new BitReader(entropyInput);
             while (mcu < segmentEnd) {
-                int by = (mcu / blocksX) * 8;
-                int bx = (mcu % blocksX) * 8;
+                int mcuY = mcu / mcusX;
+                int mcuX = mcu % mcusX;
                 for (int component = 0; component < components; component++) {
                     int table = component == 0 ? 0 : 1;
-                    int[] block = decodeBlock(bits, quant.get(table), huffman.get(table),
-                            huffman.get(table == 0 ? 0x10 : 0x11), previousDc, component);
-                    double[] dequantized = new double[64];
-                    for (int i = 0; i < 64; i++) {
-                        dequantized[i] = block[i] * quant.get(table).get(JpegZigZag.positionOf(i));
-                    }
-                    double[] restored = JpegDct.inverse(dequantized);
-                    for (int y = 0; y < 8 && by + y < height; y++) {
-                        for (int x = 0; x < 8 && bx + x < width; x++) {
-                            int value = (int) Math.round(restored[y * 8 + x]
-                                    + (1 << (precision - 1)));
-                            value = Math.max(0, Math.min((1 << precision) - 1, value));
-                            samples[((by + y) * width + bx + x) * components + component] = value;
+                    for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
+                        for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
+                            int[] block = decodeBlock(bits, quant.get(table), huffman.get(table),
+                                    huffman.get(table == 0 ? 0x10 : 0x11), previousDc, component);
+                            double[] dequantized = new double[64];
+                            for (int i = 0; i < 64; i++) {
+                                dequantized[i] = block[i]
+                                        * quant.get(table).get(JpegZigZag.positionOf(i));
+                            }
+                            double[] restored = JpegDct.inverse(dequantized);
+                            int componentX = (mcuX * sampling.horizontal(component) + blockX) * 8;
+                            int componentY = (mcuY * sampling.vertical(component) + blockY) * 8;
+                            for (int y = 0; y < 8 && componentY + y < componentHeights[component]; y++) {
+                                for (int x = 0; x < 8 && componentX + x < componentWidths[component]; x++) {
+                                    int value = (int) Math.round(restored[y * 8 + x]
+                                            + (1 << (precision - 1)));
+                                    value = Math.max(0, Math.min((1 << precision) - 1, value));
+                                    planes[component][(componentY + y) * componentWidths[component]
+                                            + componentX + x] = value;
+                                }
+                            }
                         }
                     }
                 }
@@ -373,6 +484,20 @@ public final class BaselineJpegCodec {
         }
         if (mcu != totalMcu || (restartInterval == 0 && !entropy.restartMarkers.isEmpty())) {
             throw new JpegException("JPEG scan does not match restart interval");
+        }
+        int[] samples = new int[width * height * components];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int sampleOffset = (y * width + x) * components;
+                for (int component = 0; component < components; component++) {
+                    int componentX = Math.min(componentWidths[component] - 1,
+                            (x * sampling.horizontal(component)) / sampling.maxHorizontal());
+                    int componentY = Math.min(componentHeights[component] - 1,
+                            (y * sampling.vertical(component)) / sampling.maxVertical());
+                    samples[sampleOffset + component] = planes[component][componentY
+                            * componentWidths[component] + componentX];
+                }
+            }
         }
         return JpegFrame.of(width, height, components, samples, precision);
     }
@@ -515,6 +640,29 @@ public final class BaselineJpegCodec {
             this.entropySegments = entropySegments;
             this.restartMarkers = restartMarkers;
         }
+    }
+
+    private static int componentSample(JpegFrame frame, int componentX, int componentY,
+            int component, JpegSampling sampling) {
+        int xStart = (componentX * sampling.maxHorizontal()) / sampling.horizontal(component);
+        int xEnd = ((componentX + 1) * sampling.maxHorizontal()
+                + sampling.horizontal(component) - 1) / sampling.horizontal(component);
+        int yStart = (componentY * sampling.maxVertical()) / sampling.vertical(component);
+        int yEnd = ((componentY + 1) * sampling.maxVertical()
+                + sampling.vertical(component) - 1) / sampling.vertical(component);
+        xStart = Math.min(frame.width() - 1, xStart);
+        xEnd = Math.min(frame.width(), Math.max(xStart + 1, xEnd));
+        yStart = Math.min(frame.height() - 1, yStart);
+        yEnd = Math.min(frame.height(), Math.max(yStart + 1, yEnd));
+        long total = 0;
+        int count = 0;
+        for (int y = yStart; y < yEnd; y++) {
+            for (int x = xStart; x < xEnd; x++) {
+                total += frame.sample(x, y, component);
+                count++;
+            }
+        }
+        return (int) ((total + count / 2) / count);
     }
 
     private static final class ScanHeader {

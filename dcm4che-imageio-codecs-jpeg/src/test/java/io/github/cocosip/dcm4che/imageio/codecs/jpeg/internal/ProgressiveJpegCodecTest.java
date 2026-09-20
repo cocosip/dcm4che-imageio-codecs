@@ -45,6 +45,29 @@ class ProgressiveJpegCodecTest {
     }
 
     @Test
+    void roundTripsProgressiveFourTwoZeroSampling() throws Exception {
+        int width = 13;
+        int height = 11;
+        int[] samples = new int[width * height * 3];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int offset = (y * width + x) * 3;
+                samples[offset] = x * 5 + y * 3 + 40;
+                samples[offset + 1] = 90;
+                samples[offset + 2] = 160;
+            }
+        }
+
+        byte[] encoded = ProgressiveJpegCodec.encode(JpegFrame.of(width, height, 3, samples),
+                JpegSampling.SF420);
+        JpegFrame decoded = ProgressiveJpegCodec.decode(encoded);
+
+        assertTrue(hasMarker(encoded, 0xc2));
+        assertTrue(maxDifference(samples, decoded.samples()) <= 75,
+                () -> "max difference=" + maxDifference(samples, decoded.samples()));
+    }
+
+    @Test
     void decodesJdkProgressiveJpeg() throws Exception {
         BufferedImage source = new BufferedImage(17, 13, BufferedImage.TYPE_BYTE_GRAY);
         for (int y = 0; y < source.getHeight(); y++) {

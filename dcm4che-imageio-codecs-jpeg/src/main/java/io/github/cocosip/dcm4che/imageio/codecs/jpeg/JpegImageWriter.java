@@ -4,7 +4,6 @@ import java.awt.image.RenderedImage;
 import java.io.IOException;
 
 import javax.imageio.ImageWriteParam;
-import javax.imageio.IIOException;
 import javax.imageio.spi.ImageWriterSpi;
 import javax.imageio.stream.ImageOutputStream;
 
@@ -20,13 +19,18 @@ public final class JpegImageWriter extends AbstractDicomImageWriter {
     }
 
     @Override
+    public ImageWriteParam getDefaultWriteParam() {
+        return new JpegImageWriteParam(getLocale());
+    }
+
+    @Override
     protected void writeFrame(ImageDescriptor descriptor, RenderedImage image,
             ImageOutputStream output, ImageWriteParam param) throws IOException {
-        if (param != null && param.canWriteCompressed() && param.getCompressionMode()
-                == ImageWriteParam.MODE_EXPLICIT) {
-            throw new IIOException("JPEG Baseline quality controls are not implemented");
-        }
+        float quality = JpegImageWriteParam.quality(param);
+        int restartInterval = param instanceof JpegImageWriteParam
+                ? ((JpegImageWriteParam) param).getRestartInterval() : 0;
         JpegFrame frame = JpegRasterFrames.fromImage(descriptor, image);
-        output.write(BaselineJpegCodec.encode(frame));
+        output.write(BaselineJpegCodec.encode(frame, JpegRasterFrames.sampling(descriptor),
+                restartInterval, quality));
     }
 }

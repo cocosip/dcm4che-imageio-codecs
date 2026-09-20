@@ -3,7 +3,6 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg;
 import java.awt.image.RenderedImage;
 import java.io.IOException;
 
-import javax.imageio.IIOException;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.spi.ImageWriterSpi;
 import javax.imageio.stream.ImageOutputStream;
@@ -20,13 +19,18 @@ public final class ExtendedJpegImageWriter extends AbstractDicomImageWriter {
     }
 
     @Override
+    public ImageWriteParam getDefaultWriteParam() {
+        return new JpegImageWriteParam(getLocale());
+    }
+
+    @Override
     protected void writeFrame(ImageDescriptor descriptor, RenderedImage image,
             ImageOutputStream output, ImageWriteParam param) throws IOException {
-        if (param != null && param.canWriteCompressed() && param.getCompressionMode()
-                == ImageWriteParam.MODE_EXPLICIT) {
-            throw new IIOException("JPEG Extended quality controls are not implemented");
-        }
+        float quality = JpegImageWriteParam.quality(param);
+        int restartInterval = param instanceof JpegImageWriteParam
+                ? ((JpegImageWriteParam) param).getRestartInterval() : 0;
         JpegFrame frame = JpegRasterFrames.fromImage(descriptor, image, true);
-        output.write(ExtendedJpegCodec.encode(frame));
+        output.write(ExtendedJpegCodec.encode(frame, JpegRasterFrames.sampling(descriptor),
+                restartInterval, quality));
     }
 }

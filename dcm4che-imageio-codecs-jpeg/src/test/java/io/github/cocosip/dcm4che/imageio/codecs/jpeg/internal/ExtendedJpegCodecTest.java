@@ -71,6 +71,30 @@ class ExtendedJpegCodecTest {
         assertTrue(maxDifference(samples, decoded.samples()) <= 100);
     }
 
+    @Test
+    void roundTripsTwelveBitFourTwoTwoSampling() throws Exception {
+        int width = 13;
+        int height = 9;
+        int[] samples = new int[width * height * 3];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int offset = (y * width + x) * 3;
+                samples[offset] = x * 37 + y * 29 + 400;
+                samples[offset + 1] = 1200;
+                samples[offset + 2] = 2400;
+            }
+        }
+
+        byte[] encoded = ExtendedJpegCodec.encode(JpegFrame.of(width, height, 3, samples, 12),
+                JpegSampling.SF422);
+        JpegFrame decoded = ExtendedJpegCodec.decode(encoded);
+
+        assertTrue(hasMarker(encoded, 0xc1));
+        assertFrameSampling(encoded, 0x21, 0x11, 0x11);
+        assertTrue(maxDifference(samples, decoded.samples()) <= 90,
+                () -> "max difference=" + maxDifference(samples, decoded.samples()));
+    }
+
     private static int maxDifference(int[] expected, int[] actual) {
         int max = 0;
         for (int i = 0; i < expected.length; i++) {
@@ -86,5 +110,17 @@ class ExtendedJpegCodecTest {
             }
         }
         return false;
+    }
+
+    private static void assertFrameSampling(byte[] data, int... expected) {
+        for (int i = 0; i + 1 < data.length; i++) {
+            if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xff) == 0xc1) {
+                for (int component = 0; component < expected.length; component++) {
+                    assertEquals(expected[component], data[i + 11 + component * 3] & 0xff);
+                }
+                return;
+            }
+        }
+        throw new AssertionError("SOF1 marker not found");
     }
 }

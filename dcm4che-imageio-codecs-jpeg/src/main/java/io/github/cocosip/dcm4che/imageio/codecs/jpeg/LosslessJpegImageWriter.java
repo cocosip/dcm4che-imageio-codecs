@@ -20,14 +20,24 @@ public class LosslessJpegImageWriter extends AbstractDicomImageWriter {
     }
 
     @Override
+    public ImageWriteParam getDefaultWriteParam() {
+        return new JpegImageWriteParam(getLocale());
+    }
+
+    @Override
     protected void writeFrame(ImageDescriptor descriptor, RenderedImage image,
             ImageOutputStream output, ImageWriteParam param) throws IOException {
-        if (param != null && param.canWriteCompressed() && param.getCompressionMode()
-                == ImageWriteParam.MODE_EXPLICIT) {
+        if (param != null && !(param instanceof JpegImageWriteParam)
+                && param.canWriteCompressed()
+                && param.getCompressionMode() == ImageWriteParam.MODE_EXPLICIT) {
             throw new IIOException("JPEG Lossless compression controls are not implemented");
         }
+        int restartInterval = param instanceof JpegImageWriteParam
+                ? ((JpegImageWriteParam) param).getRestartInterval() : 0;
+        int pointTransform = param instanceof JpegImageWriteParam
+                ? ((JpegImageWriteParam) param).getPointTransform() : 0;
         JpegFrame frame = JpegRasterFrames.fromImage(descriptor, image,
                 JpegRasterFrames.Flavor.LOSSLESS);
-        output.write(LosslessJpegCodec.encode(frame, 1));
+        output.write(LosslessJpegCodec.encode(frame, 1, restartInterval, pointTransform));
     }
 }

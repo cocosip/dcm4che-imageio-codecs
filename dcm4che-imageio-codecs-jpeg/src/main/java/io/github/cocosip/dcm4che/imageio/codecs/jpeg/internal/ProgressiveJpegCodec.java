@@ -16,26 +16,53 @@ public final class ProgressiveJpegCodec {
     }
 
     public static byte[] encode(JpegFrame frame) throws IOException {
+        return encode(frame, JpegSampling.SF444);
+    }
+
+    public static byte[] encode(JpegFrame frame, JpegSampling sampling) throws IOException {
+        return encode(frame, sampling, 0xc2, -1.0f);
+    }
+
+    public static byte[] encode(JpegFrame frame, JpegSampling sampling, float quality)
+            throws IOException {
+        return encode(frame, sampling, 0xc2, quality);
+    }
+
+    static byte[] encode(JpegFrame frame, JpegSampling sampling, int frameMarker)
+            throws IOException {
+        return encode(frame, sampling, frameMarker, -1.0f);
+    }
+
+    static byte[] encode(JpegFrame frame, JpegSampling sampling, int frameMarker,
+            float quality)
+            throws IOException {
         if (frame.precision() != 8 || (frame.components() != 1 && frame.components() != 3)) {
             throw new JpegException("Progressive JPEG requires 8-bit monochrome or RGB samples");
         }
-        int blocksX = (frame.width() + 7) / 8;
-        int blocksY = (frame.height() + 7) / 8;
-        int[][] coefficients = createCoefficients(frame, blocksX, blocksY);
+        if (frameMarker != 0xc2 && frameMarker != 0xc6) {
+            throw new IllegalArgumentException("unsupported progressive JPEG frame marker");
+        }
+        if (frame.components() == 1 && sampling != JpegSampling.SF444) {
+            throw new JpegException("JPEG monochrome sampling must be 1x1");
+        }
+        int[] luminanceQuantization = JpegTables.luminanceQuantization(quality);
+        int[] chrominanceQuantization = JpegTables.chrominanceQuantization(quality);
+        int[][][] coefficients = createCoefficients(frame, sampling,
+                luminanceQuantization, chrominanceQuantization);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
         output.write(0xd8);
-        writeQuantization(output, 0, JpegTables.standardLuminanceQuantization());
+        writeQuantization(output, 0, luminanceQuantization);
         if (frame.components() == 3) {
-            writeQuantization(output, 1, JpegTables.standardChrominanceQuantization());
+            writeQuantization(output, 1, chrominanceQuantization);
         }
-        writeFrameHeader(output, frame);
+        writeFrameHeader(output, frame, sampling, frameMarker);
         writeHuffmanTables(output, frame.components());
         writeScanHeader(output, frame.components(), 0, 0, 0, 0);
-        encodeDcScan(output, coefficients, blocksX, blocksY, frame.components());
+        encodeDcScan(output, coefficients, frame, sampling);
         writeScanHeader(output, frame.components(), 1, 63, 0, 0);
-        encodeAcScan(output, coefficients, blocksX, blocksY, frame.components());
+        encodeAcScan(output, coefficients, frame, sampling);
         output.write(0xff);
         output.write(0xd9);
         output.flush();
@@ -43,6 +70,10 @@ public final class ProgressiveJpegCodec {
     }
 
     public static JpegFrame decode(byte[] data) throws IOException {
+        return decode(data, 0xc2);
+    }
+
+    static JpegFrame decode(byte[] data, int expectedFrameMarker) throws IOException {
         if (data == null || data.length < 4) {
             throw new JpegException("Progressive JPEG frame is truncated");
         }
@@ -59,7 +90,8 @@ public final class ProgressiveJpegCodec {
         int precision = 0;
         int[] componentIds = null;
         int[] componentQuant = null;
-        int[][] coefficients = null;
+        JpegSampling sampling = null;
+        int[][][] coefficients = null;
         JpegMarkerReader markers = new JpegMarkerReader(input);
         boolean seenScan = false;
         while (true) {
@@ -70,7 +102,7 @@ public final class ProgressiveJpegCodec {
                 parseQuantization(payload, quant);
             } else if (code == 0xc4) {
                 parseHuffman(payload, huffman);
-            } else if (code == 0xc2) {
+            } else if (code == expectedFrameMarker) {
                 FrameHeader frame = parseFrameHeader(payload);
                 width = frame.width;
                 height = frame.height;
@@ -78,15 +110,16 @@ public final class ProgressiveJpegCodec {
                 components = frame.components;
                 componentIds = frame.componentIds;
                 componentQuant = frame.quantization;
-                coefficients = new int[((width + 7) / 8) * ((height + 7) / 8)
-                        * components][64];
+                sampling = frame.sampling;
+                coefficients = createEmptyCoefficients(width, height, components, sampling);
             } else if (code == 0xda) {
                 if (coefficients == null || !quant.containsKey(0) || !huffman.containsKey(0)) {
                     throw new JpegException("Progressive JPEG scan is missing frame or tables");
                 }
                 ScanHeader scan = parseScanHeader(payload, componentIds, components);
                 byte[] entropy = JpegMarkerReader.readEntropyBytes(input);
-                decodeScan(scan, entropy, coefficients, width, height, components, huffman);
+                decodeScan(scan, entropy, coefficients, width, height, components, sampling,
+                        huffman);
                 seenScan = true;
             } else if ((code >= 0xe0 && code <= 0xef) || code == 0xfe) {
                 // APPn and COM metadata are not part of the progressive coefficient state.
@@ -95,7 +128,7 @@ public final class ProgressiveJpegCodec {
                     throw new JpegException("Progressive JPEG is missing scan data");
                 }
                 return reconstruct(width, height, components, precision, coefficients,
-                        componentQuant, quant);
+                        componentQuant, sampling, quant);
             } else {
                 throw new JpegException("unsupported progressive JPEG marker: 0x"
                         + Integer.toHexString(code));
@@ -103,28 +136,40 @@ public final class ProgressiveJpegCodec {
         }
     }
 
-    private static int[][] createCoefficients(JpegFrame frame, int blocksX, int blocksY) {
-        int[][] coefficients = new int[blocksX * blocksY * frame.components()][64];
+    private static int[][][] createCoefficients(JpegFrame frame, JpegSampling sampling,
+            int[] luminanceQuantization, int[] chrominanceQuantization) {
+        int[][][] coefficients = createEmptyCoefficients(frame.width(), frame.height(),
+                frame.components(), sampling);
         QuantizationTable[] quant = {
-            QuantizationTable.of(JpegTables.standardLuminanceQuantization()),
-            QuantizationTable.of(JpegTables.standardChrominanceQuantization())};
-        for (int by = 0; by < blocksY; by++) {
-            for (int bx = 0; bx < blocksX; bx++) {
+            QuantizationTable.of(luminanceQuantization),
+            QuantizationTable.of(chrominanceQuantization)};
+        for (int mcuY = 0; mcuY < mcusY(frame.height(), sampling); mcuY++) {
+            for (int mcuX = 0; mcuX < mcusX(frame.width(), sampling); mcuX++) {
                 for (int component = 0; component < frame.components(); component++) {
+                    for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
+                        for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
+                            int bx = mcuX * sampling.horizontal(component) + blockX;
+                            int by = mcuY * sampling.vertical(component) + blockY;
                     double[] block = new double[64];
+                    int componentWidth = sampling.componentWidth(frame.width(), component);
+                    int componentHeight = sampling.componentHeight(frame.height(), component);
                     for (int y = 0; y < 8; y++) {
                         for (int x = 0; x < 8; x++) {
-                            int sourceX = Math.min(frame.width() - 1, bx * 8 + x);
-                            int sourceY = Math.min(frame.height() - 1, by * 8 + y);
-                            block[y * 8 + x] = frame.sample(sourceX, sourceY, component) - 128;
+                            int componentX = Math.min(componentWidth - 1, bx * 8 + x);
+                            int componentY = Math.min(componentHeight - 1, by * 8 + y);
+                            block[y * 8 + x] = componentSample(frame, componentX, componentY,
+                                    component, sampling) - 128;
                         }
                     }
                     double[] transformed = JpegDct.forward(block);
-                    int[] target = coefficients[indexOfBlock(bx, by, blocksX, frame.components(), component)];
+                    int[] target = coefficients[component][indexOfBlock(bx, by, frame.width(),
+                            frame.height(), sampling, component)];
                     for (int i = 0; i < 64; i++) {
                         target[i] = (int) Math.round(
                                 transformed[i] / quant[component == 0 ? 0 : 1].get(
                                         JpegZigZag.positionOf(i)));
+                    }
+                        }
                     }
                 }
             }
@@ -132,34 +177,57 @@ public final class ProgressiveJpegCodec {
         return coefficients;
     }
 
-    private static void encodeDcScan(ImageOutputStream output, int[][] coefficients,
-            int blocksX, int blocksY, int components) throws IOException {
+    private static int[][][] createEmptyCoefficients(int width, int height, int components,
+            JpegSampling sampling) {
+        int[][][] coefficients = new int[components][][];
+        for (int component = 0; component < components; component++) {
+            int blocksX = blocksX(width, sampling, component);
+            int blocksY = blocksY(height, sampling, component);
+            coefficients[component] = new int[blocksX * blocksY][64];
+        }
+        return coefficients;
+    }
+
+    private static void encodeDcScan(ImageOutputStream output, int[][][] coefficients,
+            JpegFrame frame, JpegSampling sampling) throws IOException {
         BitWriter bits = new BitWriter(output);
         HuffmanTable[] dc = {JpegTables.standardLuminanceDc(), JpegTables.standardChrominanceDc()};
-        int[] previous = new int[components];
-        for (int by = 0; by < blocksY; by++) {
-            for (int bx = 0; bx < blocksX; bx++) {
-                for (int component = 0; component < components; component++) {
-                    int value = coefficients[indexOfBlock(bx, by, blocksX, components, component)][0];
+        int[] previous = new int[frame.components()];
+        for (int mcuY = 0; mcuY < mcusY(frame.height(), sampling); mcuY++) {
+            for (int mcuX = 0; mcuX < mcusX(frame.width(), sampling); mcuX++) {
+                for (int component = 0; component < frame.components(); component++) {
+                    for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
+                        for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
+                            int bx = mcuX * sampling.horizontal(component) + blockX;
+                            int by = mcuY * sampling.vertical(component) + blockY;
+                    int value = coefficients[component][indexOfBlock(bx, by, frame.width(),
+                            frame.height(), sampling, component)][0];
                     int difference = value - previous[component];
                     previous[component] = value;
                     int size = category(difference);
                     HuffmanCodec.encodeSymbol(bits, dc[component == 0 ? 0 : 1], size);
                     writeAmplitude(bits, difference, size);
+                        }
+                    }
                 }
             }
         }
         bits.flush();
     }
 
-    private static void encodeAcScan(ImageOutputStream output, int[][] coefficients,
-            int blocksX, int blocksY, int components) throws IOException {
+    private static void encodeAcScan(ImageOutputStream output, int[][][] coefficients,
+            JpegFrame frame, JpegSampling sampling) throws IOException {
         BitWriter bits = new BitWriter(output);
         HuffmanTable[] ac = {JpegTables.standardLuminanceAc(), JpegTables.standardChrominanceAc()};
-        for (int by = 0; by < blocksY; by++) {
-            for (int bx = 0; bx < blocksX; bx++) {
-                for (int component = 0; component < components; component++) {
-                    int[] block = coefficients[indexOfBlock(bx, by, blocksX, components, component)];
+        for (int mcuY = 0; mcuY < mcusY(frame.height(), sampling); mcuY++) {
+            for (int mcuX = 0; mcuX < mcusX(frame.width(), sampling); mcuX++) {
+                for (int component = 0; component < frame.components(); component++) {
+                    for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
+                        for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
+                            int bx = mcuX * sampling.horizontal(component) + blockX;
+                            int by = mcuY * sampling.vertical(component) + blockY;
+                    int[] block = coefficients[component][indexOfBlock(bx, by, frame.width(),
+                            frame.height(), sampling, component)];
                     int run = 0;
                     for (int zig = 1; zig < 64; zig++) {
                         int value = block[JpegZigZag.ORDER[zig]];
@@ -180,27 +248,33 @@ public final class ProgressiveJpegCodec {
                     if (run != 0) {
                         HuffmanCodec.encodeSymbol(bits, ac[component == 0 ? 0 : 1], 0);
                     }
+                        }
+                    }
                 }
             }
         }
         bits.flush();
     }
 
-    private static void decodeScan(ScanHeader scan, byte[] entropy, int[][] coefficients,
-            int width, int height, int components, Map<Integer, HuffmanTable> huffman)
+    private static void decodeScan(ScanHeader scan, byte[] entropy, int[][][] coefficients,
+            int width, int height, int components, JpegSampling sampling,
+            Map<Integer, HuffmanTable> huffman)
             throws IOException {
-        int blocksX = (width + 7) / 8;
-        int blocksY = (height + 7) / 8;
         MemoryCacheImageInputStream entropyInput = new MemoryCacheImageInputStream(
                 new ByteArrayInputStream(entropy));
         BitReader bits = new BitReader(entropyInput);
         int[] previous = new int[components];
         ProgressiveState state = new ProgressiveState();
-        for (int by = 0; by < blocksY; by++) {
-            for (int bx = 0; bx < blocksX; bx++) {
+        for (int mcuY = 0; mcuY < mcusY(height, sampling); mcuY++) {
+            for (int mcuX = 0; mcuX < mcusX(width, sampling); mcuX++) {
                 for (int selector = 0; selector < scan.components.length; selector++) {
                     int component = scan.components[selector];
-                    int[] block = coefficients[indexOfBlock(bx, by, blocksX, components, component)];
+                    for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
+                        for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
+                            int bx = mcuX * sampling.horizontal(component) + blockX;
+                            int by = mcuY * sampling.vertical(component) + blockY;
+                    int[] block = coefficients[component][indexOfBlock(bx, by, width, height,
+                            sampling, component)];
                     if (scan.ss == 0 && scan.se == 0) {
                         if (scan.ah == 0) {
                             HuffmanTable dc = requireTable(huffman, scan.dcTables[selector]);
@@ -225,6 +299,8 @@ public final class ProgressiveJpegCodec {
                                 throw new JpegException("invalid progressive JPEG AC refinement point");
                             }
                             decodeAcRefinement(bits, ac, block, scan, state);
+                        }
+                    }
                         }
                     }
                 }
@@ -361,31 +437,62 @@ public final class ProgressiveJpegCodec {
     }
 
     private static JpegFrame reconstruct(int width, int height, int components, int precision,
-            int[][] coefficients, int[] componentQuant, Map<Integer, QuantizationTable> quant)
-            throws IOException {
-        int blocksX = (width + 7) / 8;
-        int[] samples = new int[width * height * components];
-        for (int by = 0; by < (height + 7) / 8; by++) {
-            for (int bx = 0; bx < blocksX; bx++) {
+            int[][][] coefficients, int[] componentQuant, JpegSampling sampling,
+            Map<Integer, QuantizationTable> quant) throws IOException {
+        int[][] planes = new int[components][];
+        int[] componentWidths = new int[components];
+        int[] componentHeights = new int[components];
+        for (int component = 0; component < components; component++) {
+            componentWidths[component] = sampling.componentWidth(width, component);
+            componentHeights[component] = sampling.componentHeight(height, component);
+            planes[component] = new int[componentWidths[component] * componentHeights[component]];
+        }
+        for (int mcuY = 0; mcuY < mcusY(height, sampling); mcuY++) {
+            for (int mcuX = 0; mcuX < mcusX(width, sampling); mcuX++) {
                 for (int component = 0; component < components; component++) {
                     int tableId = componentQuant[component];
                     QuantizationTable table = quant.get(tableId);
                     if (table == null) {
                         throw new JpegException("progressive JPEG references missing quantization table");
                     }
-                    int[] block = coefficients[indexOfBlock(bx, by, blocksX, components, component)];
-                    double[] restored = new double[64];
-                    for (int i = 0; i < 64; i++) {
-                        restored[i] = block[i] * table.get(JpegZigZag.positionOf(i));
-                    }
-                    double[] pixels = JpegDct.inverse(restored);
-                    for (int y = 0; y < 8 && by * 8 + y < height; y++) {
-                        for (int x = 0; x < 8 && bx * 8 + x < width; x++) {
-                            int value = (int) Math.round(pixels[y * 8 + x] + (1 << (precision - 1)));
-                            samples[((by * 8 + y) * width + bx * 8 + x) * components + component]
-                                    = Math.max(0, Math.min((1 << precision) - 1, value));
+                    for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
+                        for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
+                            int bx = mcuX * sampling.horizontal(component) + blockX;
+                            int by = mcuY * sampling.vertical(component) + blockY;
+                            int[] block = coefficients[component][indexOfBlock(bx, by, width,
+                                    height, sampling, component)];
+                            double[] restored = new double[64];
+                            for (int i = 0; i < 64; i++) {
+                                restored[i] = block[i] * table.get(JpegZigZag.positionOf(i));
+                            }
+                            double[] pixels = JpegDct.inverse(restored);
+                            int componentX = bx * 8;
+                            int componentY = by * 8;
+                            for (int y = 0; y < 8 && componentY + y < componentHeights[component]; y++) {
+                                for (int x = 0; x < 8 && componentX + x < componentWidths[component]; x++) {
+                                    int value = (int) Math.round(pixels[y * 8 + x]
+                                            + (1 << (precision - 1)));
+                                    planes[component][(componentY + y) * componentWidths[component]
+                                            + componentX + x] = Math.max(0,
+                                            Math.min((1 << precision) - 1, value));
+                                }
+                            }
                         }
                     }
+                }
+            }
+        }
+        int[] samples = new int[width * height * components];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int offset = (y * width + x) * components;
+                for (int component = 0; component < components; component++) {
+                    int componentX = Math.min(componentWidths[component] - 1,
+                            x * sampling.horizontal(component) / sampling.maxHorizontal());
+                    int componentY = Math.min(componentHeights[component] - 1,
+                            y * sampling.vertical(component) / sampling.maxVertical());
+                    samples[offset + component] = planes[component][componentY
+                            * componentWidths[component] + componentX];
                 }
             }
         }
@@ -405,15 +512,30 @@ public final class ProgressiveJpegCodec {
         }
         int[] ids = new int[components];
         int[] quant = new int[components];
+        int[] horizontal = new int[components];
+        int[] vertical = new int[components];
         for (int i = 0; i < components; i++) {
             int offset = 6 + i * 3;
             ids[i] = payload[offset] & 0xff;
-            if (payload[offset + 1] != 0x11) {
-                throw new JpegException("progressive JPEG sampling factors other than 1x1 are unsupported");
+            horizontal[i] = (payload[offset + 1] >>> 4) & 0x0f;
+            vertical[i] = payload[offset + 1] & 0x0f;
+            if (horizontal[i] == 0 || vertical[i] == 0) {
+                throw new JpegException("progressive JPEG sampling factors must be non-zero");
             }
             quant[i] = payload[offset + 2] & 0x0f;
         }
-        return new FrameHeader(width, height, components, ids, quant);
+        JpegSampling sampling = components == 1
+                ? requireMonochromeSampling(horizontal, vertical)
+                : JpegSampling.fromFactors(horizontal, vertical);
+        return new FrameHeader(width, height, components, ids, quant, sampling);
+    }
+
+    private static JpegSampling requireMonochromeSampling(int[] horizontal, int[] vertical)
+            throws IOException {
+        if (horizontal[0] != 1 || vertical[0] != 1) {
+            throw new JpegException("progressive JPEG monochrome sampling must be 1x1");
+        }
+        return JpegSampling.SF444;
     }
 
     private static ScanHeader parseScanHeader(byte[] payload, int[] componentIds, int components)
@@ -458,7 +580,8 @@ public final class ProgressiveJpegCodec {
         JpegMarkerWriter.write(output, 0xdb, payload);
     }
 
-    private static void writeFrameHeader(ImageOutputStream output, JpegFrame frame)
+    private static void writeFrameHeader(ImageOutputStream output, JpegFrame frame,
+            JpegSampling sampling, int frameMarker)
             throws IOException {
         byte[] payload = new byte[6 + frame.components() * 3];
         payload[0] = 8;
@@ -469,10 +592,11 @@ public final class ProgressiveJpegCodec {
         payload[5] = (byte) frame.components();
         for (int i = 0; i < frame.components(); i++) {
             payload[6 + i * 3] = (byte) (i + 1);
-            payload[7 + i * 3] = 0x11;
+            payload[7 + i * 3] = (byte) (frame.components() == 1
+                    ? 0x11 : sampling.factorByte(i));
             payload[8 + i * 3] = (byte) (i == 0 ? 0 : 1);
         }
-        JpegMarkerWriter.write(output, 0xc2, payload);
+        JpegMarkerWriter.write(output, frameMarker, payload);
     }
 
     private static void writeHuffmanTables(ImageOutputStream output, int components)
@@ -553,8 +677,50 @@ public final class ProgressiveJpegCodec {
         }
     }
 
-    private static int indexOfBlock(int bx, int by, int blocksX, int components, int component) {
-        return ((by * blocksX) + bx) * components + component;
+    private static int mcusX(int width, JpegSampling sampling) {
+        return (width + sampling.maxHorizontal() * 8 - 1)
+                / (sampling.maxHorizontal() * 8);
+    }
+
+    private static int mcusY(int height, JpegSampling sampling) {
+        return (height + sampling.maxVertical() * 8 - 1)
+                / (sampling.maxVertical() * 8);
+    }
+
+    private static int blocksX(int width, JpegSampling sampling, int component) {
+        return (sampling.componentWidth(width, component) + 7) / 8;
+    }
+
+    private static int blocksY(int height, JpegSampling sampling, int component) {
+        return (sampling.componentHeight(height, component) + 7) / 8;
+    }
+
+    private static int indexOfBlock(int bx, int by, int width, int height,
+            JpegSampling sampling, int component) {
+        return by * blocksX(width, sampling, component) + bx;
+    }
+
+    private static int componentSample(JpegFrame frame, int componentX, int componentY,
+            int component, JpegSampling sampling) {
+        int xStart = componentX * sampling.maxHorizontal() / sampling.horizontal(component);
+        int xEnd = ((componentX + 1) * sampling.maxHorizontal()
+                + sampling.horizontal(component) - 1) / sampling.horizontal(component);
+        int yStart = componentY * sampling.maxVertical() / sampling.vertical(component);
+        int yEnd = ((componentY + 1) * sampling.maxVertical()
+                + sampling.vertical(component) - 1) / sampling.vertical(component);
+        xStart = Math.min(frame.width() - 1, xStart);
+        xEnd = Math.min(frame.width(), Math.max(xStart + 1, xEnd));
+        yStart = Math.min(frame.height() - 1, yStart);
+        yEnd = Math.min(frame.height(), Math.max(yStart + 1, yEnd));
+        long total = 0;
+        int count = 0;
+        for (int y = yStart; y < yEnd; y++) {
+            for (int x = xStart; x < xEnd; x++) {
+                total += frame.sample(x, y, component);
+                count++;
+            }
+        }
+        return (int) ((total + count / 2) / count);
     }
 
     private static int u16(byte[] bytes, int offset) {
@@ -597,15 +763,17 @@ public final class ProgressiveJpegCodec {
         private final int components;
         private final int[] componentIds;
         private final int[] quantization;
+        private final JpegSampling sampling;
 
         private FrameHeader(int width, int height, int components, int[] componentIds,
-                int[] quantization) {
+                int[] quantization, JpegSampling sampling) {
             this.width = width;
             this.height = height;
             this.precision = 8;
             this.components = components;
             this.componentIds = componentIds;
             this.quantization = quantization;
+            this.sampling = sampling;
         }
     }
 

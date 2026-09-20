@@ -1,5 +1,6 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,6 +49,52 @@ class BaselineJpegCodecTest {
         assertThrows(JpegException.class, () -> BaselineJpegCodec.decode(encoded));
     }
 
+    @Test
+    void roundTripsFourTwoTwoSamplingWithMcuEdgeReplication() throws Exception {
+        int width = 13;
+        int height = 9;
+        int[] samples = new int[width * height * 3];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int offset = (y * width + x) * 3;
+                samples[offset] = x * 5 + y * 3 + 40;
+                samples[offset + 1] = 90;
+                samples[offset + 2] = 160;
+            }
+        }
+        JpegFrame source = JpegFrame.of(width, height, 3, samples);
+
+        byte[] encoded = BaselineJpegCodec.encode(source, JpegSampling.SF422);
+        JpegFrame decoded = BaselineJpegCodec.decode(encoded);
+
+        assertFrameSampling(encoded, 0x21, 0x11, 0x11);
+        assertTrue(maxDifference(samples, decoded.samples()) <= 65,
+                () -> "max difference=" + maxDifference(samples, decoded.samples()));
+    }
+
+    @Test
+    void roundTripsFourTwoZeroSamplingWithMcuEdgeReplication() throws Exception {
+        int width = 11;
+        int height = 13;
+        int[] samples = new int[width * height * 3];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int offset = (y * width + x) * 3;
+                samples[offset] = x * 4 + y * 3 + 40;
+                samples[offset + 1] = 90;
+                samples[offset + 2] = 160;
+            }
+        }
+        JpegFrame source = JpegFrame.of(width, height, 3, samples);
+
+        byte[] encoded = BaselineJpegCodec.encode(source, JpegSampling.SF420);
+        JpegFrame decoded = BaselineJpegCodec.decode(encoded);
+
+        assertFrameSampling(encoded, 0x22, 0x11, 0x11);
+        assertTrue(maxDifference(samples, decoded.samples()) <= 75,
+                () -> "max difference=" + maxDifference(samples, decoded.samples()));
+    }
+
     private static int maxDifference(int[] expected, int[] actual) {
         int max = 0;
         for (int i = 0; i < expected.length; i++) {
@@ -73,6 +120,21 @@ class BaselineJpegCodecTest {
             }
         }
         return false;
+    }
+
+    private static void assertFrameSampling(byte[] data, int... expected) {
+        for (int i = 0; i + 1 < data.length; i++) {
+            if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xff) == 0xc0) {
+                int length = ((data[i + 2] & 0xff) << 8) | (data[i + 3] & 0xff);
+                int components = data[i + 9] & 0xff;
+                assertTrue(length >= 8 + components * 3);
+                for (int component = 0; component < expected.length; component++) {
+                    assertEquals(expected[component], data[i + 11 + component * 3] & 0xff);
+                }
+                return;
+            }
+        }
+        throw new AssertionError("SOF0 marker not found");
     }
 
     private static void replaceFirstRestartMarker(byte[] data, int marker) {

@@ -30,13 +30,21 @@ public final class LosslessJpegCodec {
 
     public static byte[] encode(JpegFrame frame, int predictor, int restartInterval,
             int pointTransform) throws IOException {
+        return encode(frame, predictor, restartInterval, pointTransform, 0xc3);
+    }
+
+    static byte[] encode(JpegFrame frame, int predictor, int restartInterval,
+            int pointTransform, int frameMarker) throws IOException {
         validateFrame(frame, predictor, restartInterval, pointTransform);
         int transformedPrecision = frame.precision() - pointTransform;
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
         output.write(0xd8);
-        JpegMarkerWriter.write(output, 0xc3, frameHeader(frame));
+        if (frameMarker != 0xc3 && frameMarker != 0xc7) {
+            throw new IllegalArgumentException("unsupported lossless JPEG frame marker");
+        }
+        JpegMarkerWriter.write(output, frameMarker, frameHeader(frame));
         JpegMarkerWriter.write(output, 0xc4, huffmanDefinition());
         if (restartInterval != 0) {
             JpegMarkerWriter.write(output, 0xdd, new byte[] {
@@ -87,7 +95,12 @@ public final class LosslessJpegCodec {
     }
 
     public static JpegFrame decode(byte[] data, int expectedPredictor) throws IOException {
-        ParsedFrame parsed = parse(data);
+        return decode(data, expectedPredictor, 0xc3);
+    }
+
+    static JpegFrame decode(byte[] data, int expectedPredictor, int expectedFrameMarker)
+            throws IOException {
+        ParsedFrame parsed = parse(data, expectedFrameMarker);
         if (expectedPredictor != 0 && parsed.predictor != expectedPredictor) {
             throw new JpegException("JPEG Lossless predictor does not match the requested process");
         }
@@ -215,7 +228,7 @@ public final class LosslessJpegCodec {
         return HuffmanTable.fromDefinition(counts, values);
     }
 
-    private static ParsedFrame parse(byte[] data) throws IOException {
+    private static ParsedFrame parse(byte[] data, int expectedFrameMarker) throws IOException {
         if (data == null || data.length < 4) {
             throw new JpegException("JPEG Lossless frame is truncated");
         }
@@ -236,7 +249,7 @@ public final class LosslessJpegCodec {
             JpegMarker marker = markers.next();
             int code = marker.code();
             byte[] payload = marker.payload();
-            if (code == 0xc3) {
+            if (code == expectedFrameMarker) {
                 if (payload.length < 6) {
                     throw new JpegException("truncated JPEG Lossless SOF3");
                 }

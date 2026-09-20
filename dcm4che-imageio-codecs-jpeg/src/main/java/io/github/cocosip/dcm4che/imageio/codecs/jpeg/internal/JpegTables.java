@@ -60,6 +60,12 @@ final class JpegTables {
 
     static int[] standardLuminanceQuantization() { return LUMA_Q.clone(); }
     static int[] standardChrominanceQuantization() { return CHROMA_Q.clone(); }
+    static int[] luminanceQuantization(float quality) {
+        return scaledQuantization(LUMA_Q, quality);
+    }
+    static int[] chrominanceQuantization(float quality) {
+        return scaledQuantization(CHROMA_Q, quality);
+    }
     static HuffmanTable standardLuminanceDc() { return HuffmanTable.fromDefinition(DC_LUMA_BITS, DC_LUMA_VALUES); }
     static HuffmanTable standardChrominanceDc() { return HuffmanTable.fromDefinition(DC_CHROMA_BITS, DC_CHROMA_VALUES); }
     static HuffmanTable standardLuminanceAc() { return HuffmanTable.fromDefinition(AC_LUMA_BITS, AC_LUMA_VALUES); }
@@ -72,4 +78,20 @@ final class JpegTables {
     static int[] luminanceAcValues() { return AC_LUMA_VALUES.clone(); }
     static int[] chrominanceAcBits() { return AC_CHROMA_BITS.clone(); }
     static int[] chrominanceAcValues() { return AC_CHROMA_VALUES.clone(); }
+
+    private static int[] scaledQuantization(int[] base, float quality) {
+        if (quality < 0.0f) {
+            return base.clone();
+        }
+        if (Float.isNaN(quality) || quality < 0.0f || quality > 1.0f) {
+            throw new IllegalArgumentException("JPEG quality must be between 0 and 1");
+        }
+        int percentage = Math.max(1, Math.min(100, Math.round(quality * 100.0f)));
+        int scale = percentage < 50 ? 5000 / percentage : 200 - percentage * 2;
+        int[] result = new int[base.length];
+        for (int i = 0; i < base.length; i++) {
+            result[i] = Math.max(1, Math.min(255, (base[i] * scale + 50) / 100));
+        }
+        return result;
+    }
 }

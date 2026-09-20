@@ -302,9 +302,9 @@ This project replaces that mapping.
 
 #### JPEG implementation status in this repository
 
-The current `dcm4che-imageio-codecs-jpeg` module implements the Baseline Process 1,
-Extended Process 2/4, and the first Process 14 lossless slice. The following matrix is
-the authoritative status for the code currently in the repository:
+The current `dcm4che-imageio-codecs-jpeg` module implements the four DICOM Phase 1 JPEG
+transfer syntaxes plus a generic progressive Huffman ImageIO path. The following matrix
+is the authoritative status for the code currently in the repository:
 
 | Capability | Status | Details |
 |---|---|---|
@@ -313,26 +313,28 @@ the authoritative status for the code currently in the repository:
 | Sequential Huffman coding | Implemented | DCT, quantization, zig-zag, DC differential coding, AC run-length coding, byte stuffing, DQT/DHT/SOS/EOI handling. |
 | Grayscale | Implemented | `SamplesPerPixel=1`, `MONOCHROME1` and `MONOCHROME2`; `MONOCHROME1` is inverted at the image boundary. |
 | Three-component RGB | Implemented | `SamplesPerPixel=3` with interleaved 1x1 component sampling. |
-| `YBR_FULL` metadata | Partially implemented | Component samples are carried through; no YCbCr-to-RGB color conversion is performed yet. |
-| `YBR_FULL_422` | Not implemented | Explicitly rejected because 4:2:2 sampling/resampling is not implemented. |
+| `YBR_FULL` metadata | Implemented | Lossy RGB input is converted to YCbCr at the image boundary; YBR samples remain in YBR order for DICOM output. |
+| `YBR_FULL_422` | Implemented | Sequential Huffman paths emit and consume 4:2:2 sampling with shared chroma reconstruction. |
 | ImageIO SPI | Implemented | Reader/writer SPI service entries and the `jpeg-ext` format name are registered. |
 | Descriptor-backed dcm4che streams | Implemented | Uses the existing `ImageDescriptor` stream contract and reads/writes one logical frame per invocation. |
 | JDK interoperability | Verified for covered subset | JDK-generated baseline grayscale JPEG can be decoded; Baseline and 8-bit Extended writer output can be decoded by the JDK JPEG reader. |
 | JPEG Extended Process 2/4 `.51` | Implemented | Pure Java SOF1 sequential Huffman path supports unsigned 8/12-bit SF444 samples, with dedicated ImageIO SPI and descriptor-backed 16-bit container handling. |
-| JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding supports unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, predictor 1 encoding, and DRI/RST state validation; point transforms remain pending. |
-| JPEG Lossless Process 14 SV1 `.70` | Implemented | Dedicated ImageIO adapters enforce the fixed predictor-1 Process 14 SV1 contract; DRI/RST is supported internally and point transforms remain pending. |
-| Progressive JPEG | Not implemented | Progressive SOF markers are rejected. |
-| Arithmetic-coded JPEG | Not implemented | Arithmetic entropy coding is rejected. |
-| Restart intervals (`DRI`/`RST`) | Partially implemented | Lossless and sequential DCT byte-array codecs emit, consume, reset, and validate restart markers; ImageIO writer parameter exposure remains pending. |
+| JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding supports unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, predictor 1 encoding, DRI/RST validation, and ImageIO point-transform control. |
+| JPEG Lossless Process 14 SV1 `.70` | Implemented | Dedicated ImageIO adapters enforce the fixed predictor-1 Process 14 SV1 contract; DRI/RST and ImageIO point-transform control are supported. |
+| Progressive JPEG | Implemented (generic ImageIO) | SOF2 sequential/progressive Huffman encode/decode supports the implemented scan scripts and JDK progressive input; it is not a DICOM Phase 1 transfer syntax. |
+| Arithmetic-coded JPEG | Experimental only | The internal class is a private binary/range-code round-trip prototype, not an ISO JPEG QM coder and not registered as an interoperable ImageIO provider. |
+| Differential JPEG | Experimental only | The internal class does not yet implement ISO differential reference-frame semantics and is not registered as an interoperable ImageIO provider. |
+| Restart intervals (`DRI`/`RST`) | Implemented for sequential/lossless paths | Lossless and sequential DCT paths expose or consume restart intervals and validate marker order; progressive restart scans are not exposed yet. |
 | CMYK/YCCK JPEG | Not implemented | Component counts and color models outside the covered 1/3-component path are rejected. |
-| ImageReadParam regions/subsampling/band selection | Not implemented | The reader explicitly rejects these options. |
-| Writer quality/compression parameters | Not implemented | Explicit compression mode/quality requests are rejected; the writer uses fixed quantization tables. |
+| ImageReadParam regions/subsampling/band selection | Implemented | Source region, subsampling, destination offset, and source/destination band selection are applied by the reader. |
+| Writer quality/compression parameters | Implemented for lossy paths | Baseline, Extended, and Progressive writers map ImageIO compression quality to quantization; lossless uses point transform and restart controls instead of lossy quality. |
 | Multi-frame orchestration | Not implemented in this module | The current core exposes one logical frame per ImageIO invocation; dcm4che remains responsible for frame orchestration. |
 
-The implemented subset is therefore suitable for Baseline `.50` 8-bit, Extended `.51`
-unsigned 8/12-bit monochrome/RGB SF444, and Lossless `.57` unsigned 8/12/16-bit
-monochrome/RGB paths. `.70` is registered through dedicated SV1 reader/writer adapters;
-point transforms and restart intervals remain pending.
+The implemented DICOM subset is therefore suitable for Baseline `.50` 8-bit, Extended
+`.51` unsigned 8/12-bit monochrome/RGB, Lossless `.57` unsigned 8/12/16-bit
+monochrome/RGB, and `.70` SV1 through dedicated reader/writer adapters. Generic
+progressive Huffman support is available, while arithmetic, differential, and CMYK/YCCK
+remain outside the interoperable scope until they have standard cross-codec fixtures.
 
 ### 6.3 JPEG-LS Family
 

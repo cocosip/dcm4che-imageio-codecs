@@ -94,6 +94,33 @@ class JpegImageIoTest {
     void exposesPairedImageIoSpis() throws Exception {
         assertInstanceOf(JpegImageReader.class, new JpegImageReaderSpi().createReaderInstance());
         assertInstanceOf(JpegImageWriter.class, new JpegImageWriterSpi().createWriterInstance());
+        assertInstanceOf(ExtendedJpegImageReader.class,
+                new ExtendedJpegImageReaderSpi().createReaderInstance());
+        assertInstanceOf(ExtendedJpegImageWriter.class,
+                new ExtendedJpegImageWriterSpi().createWriterInstance());
+    }
+
+    @Test
+    void roundTripsTwelveBitExtendedThroughDescriptorBackedImageIo() throws Exception {
+        ImageDescriptor descriptor = descriptor(9, 10, 1, 16, 12, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                source.getRaster().setSample(x, y, 0, (x * 257 + y * 113) & 0xfff);
+            }
+        }
+
+        byte[] encoded = writeExtended(descriptor, source);
+        BufferedImage decoded = readExtended(descriptor, encoded);
+
+        assertEquals(12, decoded.getColorModel().getComponentSize(0));
+        assertJpegTolerance(source, decoded, 90);
+
+        ImageDescriptor eightBit = descriptor(8, 8, 1, 8, 8, "MONOCHROME2");
+        BufferedImage eightBitSource = DicomImageTypes.createImage(eightBit);
+        byte[] eightBitEncoded = writeExtended(eightBit, eightBitSource);
+        assertInstanceOf(BufferedImage.class,
+                ImageIO.read(new ByteArrayInputStream(eightBitEncoded)));
     }
 
     @Test
@@ -122,6 +149,24 @@ class JpegImageIoTest {
         return reader.read(0);
     }
 
+    private static byte[] writeExtended(ImageDescriptor descriptor, BufferedImage image)
+            throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DescriptorOutputStream output = new DescriptorOutputStream(bytes, descriptor);
+        ExtendedJpegImageWriter writer = new ExtendedJpegImageWriter(null);
+        writer.setOutput(output);
+        writer.write(null, new IIOImage(image, null, null), writer.getDefaultWriteParam());
+        output.flush();
+        return bytes.toByteArray();
+    }
+
+    private static BufferedImage readExtended(ImageDescriptor descriptor, byte[] encoded)
+            throws Exception {
+        ExtendedJpegImageReader reader = new ExtendedJpegImageReader(null);
+        reader.setInput(new DescriptorInputStream(encoded, descriptor));
+        return reader.read(0);
+    }
+
     private static void assertJpegTolerance(BufferedImage expected, BufferedImage actual, int tolerance) {
         for (int y = 0; y < expected.getHeight(); y++) {
             for (int x = 0; x < expected.getWidth(); x++) {
@@ -136,12 +181,17 @@ class JpegImageIoTest {
     }
 
     private static ImageDescriptor descriptor(int rows, int columns, int samples, String photometric) {
+        return descriptor(rows, columns, samples, 8, 8, photometric);
+    }
+
+    private static ImageDescriptor descriptor(int rows, int columns, int samples,
+            int bitsAllocated, int bitsStored, String photometric) {
         Attributes attributes = new Attributes();
         attributes.setInt(Tag.Rows, VR.US, rows);
         attributes.setInt(Tag.Columns, VR.US, columns);
         attributes.setInt(Tag.SamplesPerPixel, VR.US, samples);
-        attributes.setInt(Tag.BitsAllocated, VR.US, 8);
-        attributes.setInt(Tag.BitsStored, VR.US, 8);
+        attributes.setInt(Tag.BitsAllocated, VR.US, bitsAllocated);
+        attributes.setInt(Tag.BitsStored, VR.US, bitsStored);
         attributes.setInt(Tag.PixelRepresentation, VR.US, 0);
         if (samples > 1) {
             attributes.setInt(Tag.PlanarConfiguration, VR.US, 0);

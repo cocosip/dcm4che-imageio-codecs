@@ -20,7 +20,12 @@ final class JpegRasterFrames {
 
     static JpegFrame fromImage(ImageDescriptor descriptor, RenderedImage image)
             throws IIOException {
-        validateDescriptor(descriptor);
+        return fromImage(descriptor, image, false);
+    }
+
+    static JpegFrame fromImage(ImageDescriptor descriptor, RenderedImage image, boolean extended)
+            throws IIOException {
+        validateDescriptor(descriptor, extended);
         Raster raster = image.getData();
         validateImage(descriptor, image.getWidth(), image.getHeight(), raster.getNumBands(),
                 raster.getDataBuffer().getDataType());
@@ -32,19 +37,28 @@ final class JpegRasterFrames {
                 for (int component = 0; component < descriptor.getSamples(); component++) {
                     int value = raster.getSample(x, y, component);
                     if (descriptor.getSamples() == 1 && isMonochrome1(descriptor)) {
-                        value = 255 - value;
+                        value = maxSample(descriptor) - value;
                     }
                     samples[index++] = value;
                 }
             }
         }
         return JpegFrame.of(descriptor.getColumns(), descriptor.getRows(),
-                descriptor.getSamples(), samples);
+                descriptor.getSamples(), samples, extended ? descriptor.getBitsStored() : 8);
     }
 
     static BufferedImage toImage(ImageDescriptor descriptor, JpegFrame frame, ImageReadParam param)
             throws IIOException {
-        validateDescriptor(descriptor);
+        return toImage(descriptor, frame, param, false);
+    }
+
+    static BufferedImage toImage(ImageDescriptor descriptor, JpegFrame frame, ImageReadParam param,
+            boolean extended) throws IIOException {
+        validateDescriptor(descriptor, extended);
+        int expectedPrecision = extended ? descriptor.getBitsStored() : 8;
+        if (frame.precision() != expectedPrecision) {
+            throw new IIOException("JPEG precision does not match DICOM BitsStored");
+        }
         validateReadParam(param);
         BufferedImage image = param != null && param.getDestination() != null
                 ? param.getDestination()
@@ -62,7 +76,7 @@ final class JpegRasterFrames {
                 for (int component = 0; component < descriptor.getSamples(); component++) {
                     int value = samples[index++];
                     if (descriptor.getSamples() == 1 && isMonochrome1(descriptor)) {
-                        value = 255 - value;
+                        value = maxSample(descriptor) - value;
                     }
                     image.getRaster().setSample(x, y, component, value);
                 }
@@ -71,10 +85,19 @@ final class JpegRasterFrames {
         return image;
     }
 
-    private static void validateDescriptor(ImageDescriptor descriptor) throws IIOException {
-        if (descriptor.getBitsAllocated() != 8 || descriptor.getBitsStored() > 8
-                || (descriptor.getSamples() != 1 && descriptor.getSamples() != 3)) {
-            throw new IIOException("JPEG Baseline requires 8-bit monochrome or RGB pixels");
+    private static void validateDescriptor(ImageDescriptor descriptor, boolean extended)
+            throws IIOException {
+        int bitsStored = descriptor.getBitsStored();
+        boolean validPrecision = extended ? bitsStored >= 8 && bitsStored <= 12 : bitsStored <= 8;
+        boolean validAllocation = extended
+                ? descriptor.getBitsAllocated() == (bitsStored <= 8 ? 8 : 16)
+                : descriptor.getBitsAllocated() == 8;
+        if (!validAllocation || !validPrecision
+                || (descriptor.getSamples() != 1 && descriptor.getSamples() != 3)
+                || (extended && descriptor.isSigned())) {
+            throw new IIOException(extended
+                    ? "JPEG Extended requires unsigned 8-12 bit monochrome or RGB pixels"
+                    : "JPEG Baseline requires 8-bit monochrome or RGB pixels");
         }
         String photometric = String.valueOf(descriptor.getPhotometricInterpretation());
         if ("YBR_FULL_422".equals(photometric)) {
@@ -87,7 +110,10 @@ final class JpegRasterFrames {
         if (width != descriptor.getColumns() || height != descriptor.getRows()) {
             throw new IIOException("JPEG image dimensions do not match descriptor");
         }
-        if (bands != descriptor.getSamples() || dataType != DataBuffer.TYPE_BYTE) {
+        int expectedType = descriptor.getBitsAllocated() == 8
+                ? DataBuffer.TYPE_BYTE
+                : DataBuffer.TYPE_USHORT;
+        if (bands != descriptor.getSamples() || dataType != expectedType) {
             throw new IIOException("JPEG image sample model does not match descriptor");
         }
     }
@@ -106,5 +132,9 @@ final class JpegRasterFrames {
 
     private static boolean isMonochrome1(ImageDescriptor descriptor) {
         return "MONOCHROME1".equals(String.valueOf(descriptor.getPhotometricInterpretation()));
+    }
+
+    private static int maxSample(ImageDescriptor descriptor) {
+        return (1 << descriptor.getBitsStored()) - 1;
     }
 }

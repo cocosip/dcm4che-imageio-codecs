@@ -1,3 +1,4 @@
 # uncomment when implemented
 #io.github.cocosip.dcm4che.imageio.codecs.jpeg.JpegImageReaderSpi
 io.github.cocosip.dcm4che.imageio.codecs.jpeg.JpegImageReaderSpi
+io.github.cocosip.dcm4che.imageio.codecs.jpeg.ExtendedJpegImageReaderSpi

@@ -16,6 +16,20 @@ public final class BaselineJpegCodec {
     }
 
     public static byte[] encode(JpegFrame frame) throws IOException {
+        if (frame.precision() != 8) {
+            throw new JpegException("JPEG Baseline requires 8-bit samples");
+        }
+        return encode(frame, 0xc0);
+    }
+
+    static byte[] encodeExtended(JpegFrame frame) throws IOException {
+        if (frame.precision() < 8 || frame.precision() > 12) {
+            throw new JpegException("JPEG Extended requires 8-12 bit samples");
+        }
+        return encode(frame, 0xc1);
+    }
+
+    private static byte[] encode(JpegFrame frame, int frameMarker) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
@@ -24,7 +38,7 @@ public final class BaselineJpegCodec {
         if (frame.components() == 3) {
             writeQuantization(output, 1, JpegTables.standardChrominanceQuantization());
         }
-        writeFrameHeader(output, frame);
+        writeFrameHeader(output, frame, frameMarker);
         writeHuffmanTables(output, frame.components());
         writeScanHeader(output, frame.components());
         BitWriter bits = new BitWriter(output);
@@ -51,6 +65,15 @@ public final class BaselineJpegCodec {
     }
 
     public static JpegFrame decode(byte[] data) throws IOException {
+        return decode(data, 0xc0, false);
+    }
+
+    static JpegFrame decodeExtended(byte[] data) throws IOException {
+        return decode(data, 0xc1, true);
+    }
+
+    private static JpegFrame decode(byte[] data, int expectedFrameMarker, boolean extended)
+            throws IOException {
         if (data == null || data.length < 4) {
             throw new JpegException("JPEG frame is truncated");
         }
@@ -62,6 +85,7 @@ public final class BaselineJpegCodec {
         Map<Integer, HuffmanTable> huffman = new HashMap<Integer, HuffmanTable>();
         int width = 0;
         int height = 0;
+        int precision = 0;
         int components = 0;
         int[] componentIds = null;
         boolean scanSeen = false;
@@ -74,9 +98,13 @@ public final class BaselineJpegCodec {
                 parseQuantization(payload, quant);
             } else if (code == 0xc4) {
                 parseHuffman(payload, huffman);
-            } else if (code == 0xc0) {
-                if (payload.length < 6 || (payload[0] & 0xff) != 8) {
-                    throw new JpegException("JPEG Baseline requires 8-bit SOF0");
+            } else if (code == expectedFrameMarker) {
+                precision = payload.length < 1 ? 0 : payload[0] & 0xff;
+                if (payload.length < 6 || (extended ? precision < 8 || precision > 12
+                        : precision != 8)) {
+                    throw new JpegException(extended
+                            ? "JPEG Extended requires 8-12 bit SOF1"
+                            : "JPEG Baseline requires 8-bit SOF0");
                 }
                 height = u16(payload, 1);
                 width = u16(payload, 3);
@@ -99,14 +127,15 @@ public final class BaselineJpegCodec {
                 }
                 ScanHeader scan = parseScan(payload, componentIds, components);
                 byte[] entropy = JpegMarkerReader.readEntropyBytes(input);
-                JpegFrame frame = decodeScan(width, height, components, quant, huffman, scan, entropy);
+                JpegFrame frame = decodeScan(width, height, components, precision, quant, huffman,
+                        scan, entropy);
                 JpegMarker end = markers.next();
                 if (end.code() != 0xd9) {
                     throw new JpegException("JPEG frame does not end with EOI");
                 }
                 scanSeen = true;
                 return frame;
-            } else if (code == 0xdd || code == 0xc1 || code == 0xc2 || code == 0xc3
+            } else if (code == 0xdd || code == 0xc0 || code == 0xc1 || code == 0xc2 || code == 0xc3
                     || code == 0xc9 || code == 0xca || code == 0xcb) {
                 throw new JpegException("unsupported JPEG marker: 0x" + Integer.toHexString(code));
             } else if (code == 0xd8 || code == 0xd9 || (code >= 0xd0 && code <= 0xd7)) {
@@ -125,9 +154,10 @@ public final class BaselineJpegCodec {
         JpegMarkerWriter.write(output, 0xdb, payload);
     }
 
-    private static void writeFrameHeader(ImageOutputStream output, JpegFrame frame) throws IOException {
+    private static void writeFrameHeader(ImageOutputStream output, JpegFrame frame, int marker)
+            throws IOException {
         byte[] payload = new byte[6 + frame.components() * 3];
-        payload[0] = 8;
+        payload[0] = (byte) frame.precision();
         payload[1] = (byte) (frame.height() >>> 8);
         payload[2] = (byte) frame.height();
         payload[3] = (byte) (frame.width() >>> 8);
@@ -138,7 +168,7 @@ public final class BaselineJpegCodec {
             payload[7 + i * 3] = 0x11;
             payload[8 + i * 3] = (byte) (i == 0 ? 0 : 1);
         }
-        JpegMarkerWriter.write(output, 0xc0, payload);
+        JpegMarkerWriter.write(output, marker, payload);
     }
 
     private static void writeHuffmanTables(ImageOutputStream output, int components) throws IOException {
@@ -184,7 +214,8 @@ public final class BaselineJpegCodec {
             for (int x = 0; x < 8; x++) {
                 int sourceX = Math.min(frame.width() - 1, bx + x);
                 int sourceY = Math.min(frame.height() - 1, by + y);
-                block[y * 8 + x] = frame.sample(sourceX, sourceY, component) - 128;
+            block[y * 8 + x] = frame.sample(sourceX, sourceY, component)
+                    - (1 << (frame.precision() - 1));
             }
         }
         double[] transformed = JpegDct.forward(block);
@@ -219,7 +250,7 @@ public final class BaselineJpegCodec {
         }
     }
 
-    private static JpegFrame decodeScan(int width, int height, int components,
+    private static JpegFrame decodeScan(int width, int height, int components, int precision,
             Map<Integer, QuantizationTable> quant, Map<Integer, HuffmanTable> huffman,
             ScanHeader scan, byte[] entropy) throws IOException {
         if (width == 0 || height == 0 || !scanSeenTables(quant, huffman, components)) {
@@ -243,15 +274,16 @@ public final class BaselineJpegCodec {
                     double[] restored = JpegDct.inverse(dequantized);
                     for (int y = 0; y < 8 && by + y < height; y++) {
                         for (int x = 0; x < 8 && bx + x < width; x++) {
-                            int value = (int) Math.round(restored[y * 8 + x] + 128);
-                            value = Math.max(0, Math.min(255, value));
+                            int value = (int) Math.round(restored[y * 8 + x]
+                                    + (1 << (precision - 1)));
+                            value = Math.max(0, Math.min((1 << precision) - 1, value));
                             samples[((by + y) * width + bx + x) * components + component] = value;
                         }
                     }
                 }
             }
         }
-        return JpegFrame.of(width, height, components, samples);
+        return JpegFrame.of(width, height, components, samples, precision);
     }
 
     private static boolean scanSeenTables(Map<Integer, QuantizationTable> quant,

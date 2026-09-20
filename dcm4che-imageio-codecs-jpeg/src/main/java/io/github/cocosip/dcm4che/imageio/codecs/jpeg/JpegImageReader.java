@@ -33,7 +33,7 @@ public final class JpegImageReader extends AbstractDicomImageReader {
         }
     }
 
-    private static byte[] readRemaining(ImageInputStream input) throws IOException {
+    static byte[] readRemaining(ImageInputStream input) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
         int read;

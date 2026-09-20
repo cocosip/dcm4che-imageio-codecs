@@ -317,8 +317,8 @@ the code currently in the repository:
 | `YBR_FULL_422` | Not implemented | Explicitly rejected because 4:2:2 sampling/resampling is not implemented. |
 | ImageIO SPI | Implemented | Reader/writer SPI service entries and the `jpeg-ext` format name are registered. |
 | Descriptor-backed dcm4che streams | Implemented | Uses the existing `ImageDescriptor` stream contract and reads/writes one logical frame per invocation. |
-| JDK interoperability | Verified for covered subset | JDK-generated baseline grayscale JPEG can be decoded; writer output can be decoded by the JDK JPEG reader. |
-| JPEG Extended Process 2/4 `.51` | Not implemented | 12-bit precision and any non-baseline SOF are rejected. |
+| JDK interoperability | Verified for covered subset | JDK-generated baseline grayscale JPEG can be decoded; Baseline and 8-bit Extended writer output can be decoded by the JDK JPEG reader. |
+| JPEG Extended Process 2/4 `.51` | Implemented | Pure Java SOF1 sequential Huffman path supports unsigned 8/12-bit SF444 samples, with dedicated ImageIO SPI and descriptor-backed 16-bit container handling. |
 | JPEG Lossless Process 14 `.57` | Not implemented | Predictive Huffman coding is not present. |
 | JPEG Lossless Process 14 SV1 `.70` | Not implemented | Fixed predictor-1 lossless path is not present. |
 | Progressive JPEG | Not implemented | Progressive SOF markers are rejected. |
@@ -329,9 +329,10 @@ the code currently in the repository:
 | Writer quality/compression parameters | Not implemented | Explicit compression mode/quality requests are rejected; the writer uses fixed quantization tables. |
 | Multi-frame orchestration | Not implemented in this module | The current core exposes one logical frame per ImageIO invocation; dcm4che remains responsible for frame orchestration. |
 
-The implemented subset is therefore suitable for Baseline `.50` 8-bit
-monochrome/RGB paths only. Registration for `.51`, `.57`, and `.70` must not be
-added until their codec implementations and interoperability tests exist.
+The implemented subset is therefore suitable for Baseline `.50` 8-bit and
+Extended `.51` unsigned 8/12-bit monochrome/RGB SF444 paths. Registration for
+`.57` and `.70` must not be added until their lossless predictive implementations
+and interoperability tests exist.
 
 ### 6.3 JPEG-LS Family
 
@@ -702,10 +703,11 @@ dcm4che-imageio-codecs/
 - License: Apache 2.0.
 - Version management: `${revision}` in parent POM + `flatten-maven-plugin`.
 - Development order decided (core → rle → jpeg → jpegls → jpeg2000).
-- Core, RLE, and the JPEG module's Baseline Process 1 slice are implemented;
-- The JPEG status matrix in Section 6.2 is the source of truth: only Baseline
-  Process 1 `.50` is registered, while `.51`, `.57`, and `.70` remain
-  unimplemented and unregistered.
+- Core, RLE, and the JPEG module's Baseline Process 1 plus Extended Process
+  2/4 slices are implemented;
+- The JPEG status matrix in Section 6.2 is the source of truth: Baseline
+  Process 1 `.50` and Extended Process 2/4 `.51` are registered; `.57` and
+  `.70` remain unimplemented and unregistered.
 - JPEG-LS and JPEG 2000/HTJ2K modules remain scaffolds without codec code.
 - Two minor open questions remain (see Section 9).
 

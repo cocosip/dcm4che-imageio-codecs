@@ -1,6 +1,10 @@
-# JPEG 编解码开发计划
+# JPEG 编解码设计与开发计划
 
-## 1. 当前范围
+本文档合并 JPEG Baseline 设计、实施计划和后续 DICOM JPEG 开发范围，作为
+`dcm4che-imageio-codecs-jpeg` 的唯一专题文档。实现状态以本文档和
+`docs/design.md` 的 JPEG status matrix 为准。
+
+## 1. 范围与约束
 
 本项目只实现 fo-dicom.Codecs 当前公开且仍在使用的四个 DICOM JPEG Transfer Syntax：
 
@@ -11,39 +15,85 @@
 | JPEG Lossless Process 14 | `.57` | 8/12/16-bit，Predictive Huffman | 8/12/16-bit，Monochrome/RGB |
 | JPEG Lossless Process 14 SV1 | `.70` | Predictor 1 | Predictor 1 |
 
-这四个 UID 是本模块唯一允许进入 dcm4che reader/writer properties 的 JPEG 注册项。
-实现不扩展 dcm4che 的公开 DICOM 颜色模型或 Transfer Syntax 语义。
+全局约束：
+
+- 纯 Java 实现，不依赖 JNI、JDK 内部 JPEG 实现或外部编码库。
+- dcm4che 负责 descriptor、fragment、transfer syntax 映射和多帧编排；本模块每次
+  ImageIO reader/writer 调用处理一个逻辑压缩帧。
+- 只支持代码和 descriptor 已明确覆盖的 Monochrome/RGB 语义；不新增 DICOM 颜色模型。
+- 任何 malformed marker、缺失 table、精度或采样不匹配、截断 entropy 数据和错误参数
+  都必须明确失败，不能静默补齐或改变像素语义。
 
 明确不在范围内：
 
 - CMYK/YCCK：应用范围有限，且 dcm4che 没有对应的公开 Photometric Interpretation、
   Pixel Data 和渲染契约；不实现四组件颜色模型、转换器或 SPI。
 - Progressive、Arithmetic、Differential/Hierarchical：不进入 DICOM 公开注册，
-  也不作为当前标准互操作目标。
+  也不作为当前标准互操作目标。仓库中若保留内部研究类，不得通过 properties、公开
+  DICOM API 或默认 SPI 暴露。
 
-## 2. 已完成能力
+## 2. 架构与数据流
 
-### 2.1 JPEG 核心
+JPEG 模块分为 codec-neutral 的 marker/bit/entropy 层、DCT 或 predictive codec 层，
+以及 ImageIO/DICOM 适配层：
 
-- JPEG marker、长度和截断输入校验。
+```text
+JpegImageReader / JpegImageWriter
+        |
+  JpegRasterFrames             descriptor 与 RenderedImage 转换
+        |
+  Baseline / Extended / Lossless codec
+        |
+  marker + bit + Huffman + quantization + DCT/predictive primitives
+```
+
+读取流程：
+
+1. `AbstractDicomImageReader` 获取 `ImageDescriptor`，并把当前压缩帧交给 JPEG reader。
+2. reader 校验 SOI、SOF、DQT/DHT、SOS、DRI/RST 和 EOI，解码 component sample buffer。
+3. `JpegRasterFrames` 将 component buffer 交错写入 descriptor 对应的目标图像；
+   `MONOCHROME1` 在图像边界执行反转。
+4. dcm4che 调用方继续负责 encapsulation、偶数字节填充和多帧持久化。
+
+写入流程：
+
+1. writer 从 descriptor-compatible `RenderedImage` 提取 Monochrome/RGB component buffer。
+2. 对 Baseline/Extended 执行 level shift、DCT、量化、zig-zag、Huffman entropy coding。
+3. 对 Lossless/SV1 执行 predictor、point transform、Huffman entropy coding。
+4. 将一帧完整 JPEG 写入已连接的 `ImageOutputStream`。
+
+## 3. 已完成实现
+
+### 3.1 公共 JPEG 基础
+
+- JPEG marker、长度、SOI/EOI 和截断输入校验。
 - MSB-first bit reader/writer、byte stuffing 和 marker 边界处理。
-- Canonical Huffman table、DQT/DHT/SOS/EOI 处理。
+- Canonical Huffman table、DQT/DHT/SOS 解析与生成。
 - 8x8 DCT、量化、zig-zag、DC differential 和 AC run-length coding。
-- Predictive lossless coding、predictor 1-7 解码、predictor 1 编码。
-- DRI/RST restart interval 的编码、解码和顺序校验。
+- Predictive lossless coding；predictor 1-7 解码、predictor 1 编码。
+- DRI/RST restart interval 的编码、解码和 marker 顺序校验。
 
-### 2.2 ImageIO 和 DICOM 适配
+### 3.2 DICOM JPEG 语法
 
-- Baseline、Extended、Lossless、Lossless SV1 各自的 reader/writer 和 SPI。
-- Descriptor-backed 读写，支持 Monochrome/RGB 的覆盖范围。
-- Baseline/Extended 的质量和量化参数。
+| 语法 | 当前状态 | 说明 |
+| --- | --- | --- |
+| `.50` Baseline | 已完成 | SOF0，8-bit，Sequential DCT，Huffman，Monochrome/RGB。 |
+| `.51` Extended | 已完成 | SOF1，unsigned 8/12-bit，SF444，Descriptor-backed 16-bit 容器。 |
+| `.57` Lossless | 已完成 | SOF3，unsigned 8/12/16-bit，predictor 1-7 解码，predictor 1 编码。 |
+| `.70` Lossless SV1 | 已完成 | 固定 predictor 1，独立 reader/writer 适配器和参数约束。 |
+
+### 3.3 ImageIO 与 DICOM 适配
+
+- 四个语法各自的 reader/writer 和 ImageIO SPI。
+- Descriptor-backed 输入输出，Monochrome/RGB 样本转换。
+- Baseline/Extended 的 compression quality 与 quantization 控制。
 - Lossless/SV1 的 point transform、predictor 和 restart 参数校验。
-- ImageReadParam 的区域、采样、目标偏移和 band 选择路径。
+- ImageReadParam 的 source region、subsampling、destination offset 和 band selection。
 - DICOM properties 只注册 `.50/.51/.57/.70`，不覆盖其他 dcm4che 默认 UID 映射。
 
-## 3. 代码与注册边界
+## 4. 注册边界
 
-正式 DICOM 注册位于：
+正式 DICOM 注册文件：
 
 ```text
 dcm4che-imageio-codecs-jpeg/src/main/resources/
@@ -51,7 +101,7 @@ dcm4che-imageio-codecs-jpeg/src/main/resources/
   io/github/cocosip/dcm4che/imageio/codecs/jpeg/writers.properties
 ```
 
-注册表必须只包含：
+两个文件都必须且只能包含以下 UID：
 
 ```text
 1.2.840.10008.1.2.4.50
@@ -60,34 +110,41 @@ dcm4che-imageio-codecs-jpeg/src/main/resources/
 1.2.840.10008.1.2.4.70
 ```
 
-仓库中可能保留用于算法研究的内部 Progressive、Arithmetic 或 Differential 类，
-但这些类不能被 properties、公开 DICOM API 或默认 SPI 暴露。内部自编码/自解码通过
-只能证明闭环，不能据此宣称标准互操作完成。
+Progressive、Arithmetic、Differential/Hierarchical 和 CMYK/YCCK 不得新增 DICOM
+Transfer Syntax、Photometric Interpretation、四组件 Pixel Data 或公开 SPI 注册。
 
-## 4. 待完成事项
+## 5. 剩余开发与验证任务
 
-当前剩余工作集中在四个正式 Transfer Syntax 的互操作和边界验证：
+剩余工作只针对四个正式 Transfer Syntax 的标准互操作和边界覆盖：
 
-1. 为 `.51` 的 8/12-bit Sequential Huffman 增加外部编码器输入和外部解码器输出验证。
-2. 为 `.57`、`.70` 的 8/12/16-bit Lossless 增加外部 fixture，覆盖 predictor、point transform
-   和 restart interval。
-3. 补充 malformed marker、缺失 table、错误 RST 顺序、截断 entropy 数据的回归样例。
-4. 对 Monochrome1、RGB、位深和 signed/unsigned descriptor 组合进行矩阵化验证。
+1. `.51`：增加外部编码器输入和外部解码器输出，覆盖 8-bit 与 12-bit。
+2. `.57/.70`：增加外部 Lossless fixture，覆盖 predictor、point transform 和 restart interval。
+3. 补充 malformed marker、缺失 table、错误 RST 顺序和截断 entropy 数据的回归样例。
+4. 对 Monochrome1、Monochrome2、RGB、位深和 signed/unsigned descriptor 组合做矩阵化验证。
 5. 记录每个 fixture 的编码器、解码器、像素比较方式和允许误差。
 
-Progressive、Arithmetic、Differential/Hierarchical 和 CMYK/YCCK 不列入上述待完成事项。
+Progressive、Arithmetic、Differential/Hierarchical 和 CMYK/YCCK 不属于上述待办事项。
 
-## 5. 验收标准
+## 6. 测试分层与验收标准
 
-每个正式语法都需要同时满足：
+测试分为四层：
 
-1. Java encoder 输出可以被至少一个外部标准 decoder 解码。
-2. 外部标准 encoder 输出可以被 Java decoder 解码。
-3. Lossy `.50/.51` 使用明确的像素误差阈值；Lossless `.57/.70` 使用逐样本相等比较。
-4. 非法 marker、缺失 table、精度不匹配、采样不匹配和错误参数被明确拒绝。
-5. 注册边界测试确认只有四个 UID，且不覆盖已有 dcm4che 默认映射。
+1. **Primitive tests**：marker、bit boundary、byte stuffing、Huffman、quantization、
+   zig-zag 和 DCT/predictive 基础。
+2. **Codec tests**：Monochrome/RGB component buffer round-trip、精度、predictor、
+   restart 和非法输入拒绝。
+3. **ImageIO tests**：SPI discovery、descriptor-backed reader/writer、ImageReadParam、
+   `MONOCHROME1` 反转和 writer 输出读取。
+4. **Interoperability tests**：外部 encoder -> Java decoder，以及 Java encoder -> 外部 decoder。
 
-## 6. 验证命令
+验收要求：
+
+- Lossy `.50/.51` 使用明确的像素误差阈值，不比较压缩字节相等。
+- Lossless `.57/.70` 使用逐样本相等比较。
+- 注册边界测试确认只有四个 UID，且不覆盖已有 dcm4che 默认映射。
+- 内部自编码/自解码通过只能证明闭环，不能替代外部互操作证据。
+
+## 7. 验证命令
 
 ```powershell
 .\mvnw.cmd -q -pl dcm4che-imageio-codecs-jpeg -am -DforkCount=0 clean test

@@ -27,8 +27,10 @@ public final class ProgressiveJpegImageWriter extends AbstractDicomImageWriter {
     protected void writeFrame(ImageDescriptor descriptor, RenderedImage image,
             ImageOutputStream output, ImageWriteParam param) throws IOException {
         float quality = JpegImageWriteParam.quality(param);
+        int restartInterval = param instanceof JpegImageWriteParam
+                ? ((JpegImageWriteParam) param).getRestartInterval() : 0;
         JpegFrame frame = JpegRasterFrames.fromImage(descriptor, image);
-        output.write(ProgressiveJpegCodec.encode(frame, JpegRasterFrames.sampling(descriptor),
-                quality));
+        output.write(ProgressiveJpegCodec.encodeWithRestart(frame,
+                JpegRasterFrames.sampling(descriptor), quality, restartInterval));
     }
 }

@@ -6,9 +6,9 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
  * remaining components are reduced relative to the largest sampling grid.
  */
 public enum JpegSampling {
-    SF444(1, 1, new int[] {1, 1, 1}, new int[] {1, 1, 1}),
-    SF422(2, 1, new int[] {2, 1, 1}, new int[] {1, 1, 1}),
-    SF420(2, 2, new int[] {2, 1, 1}, new int[] {2, 1, 1});
+    SF444(1, 1, new int[] {1, 1, 1, 1}, new int[] {1, 1, 1, 1}),
+    SF422(2, 1, new int[] {2, 1, 1, 1}, new int[] {1, 1, 1, 1}),
+    SF420(2, 2, new int[] {2, 1, 1, 1}, new int[] {2, 1, 1, 1});
 
     private final int maxHorizontal;
     private final int maxVertical;
@@ -51,12 +51,13 @@ public enum JpegSampling {
     }
 
     static JpegSampling fromFactors(int[] horizontal, int[] vertical) throws JpegException {
-        if (horizontal.length != 3 || vertical.length != 3) {
-            throw new JpegException("JPEG sampling requires three component factors");
+        if ((horizontal.length != 3 && horizontal.length != 4)
+                || horizontal.length != vertical.length) {
+            throw new JpegException("JPEG sampling requires three or four component factors");
         }
         for (JpegSampling sampling : values()) {
             boolean match = true;
-            for (int component = 0; component < 3; component++) {
+            for (int component = 0; component < horizontal.length; component++) {
                 match &= sampling.horizontal(component) == horizontal[component]
                         && sampling.vertical(component) == vertical[component];
             }

@@ -3,6 +3,8 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -17,15 +19,77 @@ public final class ArithmeticJpegCodec {
     }
 
     public static byte[] encodeSequential(JpegFrame frame) throws IOException {
-        return encodeDct(frame, 0xc9);
+        return encodeSequential(frame, 0);
+    }
+
+    public static byte[] encodeSequential(JpegFrame frame, int restartInterval)
+            throws IOException {
+        return encodeDct(frame, 0xc9, restartInterval, 0, 1, 5);
+    }
+
+    public static byte[] encodeSequential(JpegFrame frame, int restartInterval,
+            int dcL, int dcU, int acK) throws IOException {
+        return encodeDct(frame, 0xc9, restartInterval, dcL, dcU, acK);
     }
 
     public static byte[] encodeProgressive(JpegFrame frame) throws IOException {
-        return encodeDct(frame, 0xca);
+        return encodeProgressive(frame, 0, 1, 5);
+    }
+
+    /** Encodes SOF10 using caller-selected DAC DC L/U and AC Kx conditioning. */
+    public static byte[] encodeProgressive(JpegFrame frame, int dcL, int dcU, int acK)
+            throws IOException {
+        validateDctFrame(frame);
+        validateConditioning(dcL, dcU, acK);
+        QuantizationTable[] quant = {
+            QuantizationTable.of(JpegTables.standardLuminanceQuantization()),
+            QuantizationTable.of(JpegTables.standardChrominanceQuantization())};
+        int blocksX = (frame.width() + 7) / 8;
+        int blocksY = (frame.height() + 7) / 8;
+        int[][][] coefficients = computeCoefficients(frame, quant, blocksX, blocksY);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
+        output.write(0xff);
+        output.write(0xd8);
+        writeQuantization(output, 0, JpegTables.standardLuminanceQuantization());
+        if (frame.components() == 3) {
+            writeQuantization(output, 1, JpegTables.standardChrominanceQuantization());
+        }
+        writeFrameHeader(output, frame, 0xca);
+        JpegMarkerWriter.write(output, 0xcc,
+                new byte[] {0, (byte) ((dcU << 4) | dcL), 0x10, (byte) acK});
+        JpegMarkerWriter.write(output, 0xda, scanHeader(frame.components(), 0, 0, 0, 0));
+        output.write(JpegArithmeticDct.encodeDc(coefficients, blocksX, blocksY,
+                frame.components(), dcL, dcU));
+        for (int component = 0; component < frame.components(); component++) {
+            JpegMarkerWriter.write(output, 0xda,
+                    scanHeader(component + 1, component, 1, 63, 0));
+            output.write(JpegArithmeticDct.encodeAc(coefficients, blocksX, blocksY, component,
+                    acK));
+        }
+        output.write(0xff);
+        output.write(0xd9);
+        output.flush();
+        return bytes.toByteArray();
     }
 
     public static byte[] encodeLossless(JpegFrame frame) throws IOException {
-        return encodeLossless(frame, 0xcb);
+        return encodeLossless(frame, 1, 0);
+    }
+
+    public static byte[] encodeLossless(JpegFrame frame, int predictor) throws IOException {
+        return encodeLossless(frame, predictor, 0);
+    }
+
+    public static byte[] encodeLossless(JpegFrame frame, int predictor, int restartInterval)
+            throws IOException {
+        return encodeLossless(frame, predictor, restartInterval, 0, 1);
+    }
+
+    /** Encodes SOF11 with caller-selected DAC DC conditioning values. */
+    public static byte[] encodeLossless(JpegFrame frame, int predictor, int restartInterval,
+            int dcL, int dcU) throws IOException {
+        return encodeLossless(frame, 0xcb, predictor, restartInterval, dcL, dcU);
     }
 
     static byte[] encodeDifferentialSequential(JpegFrame frame) throws IOException {
@@ -37,7 +101,7 @@ public final class ArithmeticJpegCodec {
     }
 
     static byte[] encodeDifferentialLossless(JpegFrame frame) throws IOException {
-        return encodeLossless(frame, 0xcf);
+        return encodeLossless(frame, 0xcf, 1, 0);
     }
 
     public static JpegFrame decode(byte[] data) throws IOException {
@@ -55,6 +119,15 @@ public final class ArithmeticJpegCodec {
         int precision = 0;
         int components = 0;
         int frameMarker = 0;
+        int restartInterval = 0;
+        Conditioning conditioning = new Conditioning(0, 1, 5);
+        int[][][] progressiveCoefficients = null;
+        int progressiveBlocksX = 0;
+        int progressiveBlocksY = 0;
+        boolean progressiveScanSeen = false;
+        boolean progressiveDcSeen = false;
+        boolean[] progressiveAcSeen = null;
+        boolean dacSeen = false;
         JpegMarkerReader markers = new JpegMarkerReader(input);
         while (true) {
             JpegMarker marker = markers.next();
@@ -80,24 +153,71 @@ public final class ArithmeticJpegCodec {
                     }
                 }
             } else if (code == 0xcc) {
-                if (payload.length == 0 || (payload.length & 1) != 0) {
-                    throw new JpegException("invalid arithmetic JPEG DAC marker");
+                conditioning = parseArithmeticConditioning(payload);
+                dacSeen = true;
+            } else if (code == 0xdd) {
+                if (payload.length != 2) {
+                    throw new JpegException("invalid arithmetic JPEG restart interval");
                 }
+                restartInterval = u16(payload, 0);
             } else if (code == 0xda) {
-                if (frameMarker == 0 || (isDct(frameMarker) && !hasQuantization(quant, components))) {
+                if (frameMarker == 0 || !dacSeen
+                        || (isDct(frameMarker) && !hasQuantization(quant, components))) {
                     throw new JpegException("arithmetic JPEG scan is missing frame or tables");
                 }
-                ScanHeader scan = parseScan(payload, components);
-                byte[] entropy = JpegMarkerReader.readEntropyBytes(input);
-                JpegMarker end = markers.next();
-                if (end.code() != 0xd9) {
-                    throw new JpegException("arithmetic JPEG frame does not end with EOI");
+                ScanHeader scan = parseScan(payload, components, !isDct(frameMarker));
+                if (isDct(frameMarker) && frameMarker != 0xca
+                        && scan.componentIds.length != components) {
+                    throw new JpegException("arithmetic sequential scan must include all components");
                 }
+                EntropySegments entropy = readEntropySegments(input);
                 if (isDct(frameMarker)) {
-                    return decodeDctEntropy(width, height, components, precision, quant, scan, entropy);
+                    if (frameMarker == 0xca && (entropy.segments.size() != 1
+                            || !entropy.restartMarkers.isEmpty())) {
+                        throw new JpegException("arithmetic DCT restart segments are not supported");
+                    }
+                    if (frameMarker == 0xca) {
+                        if (progressiveCoefficients == null) {
+                            progressiveBlocksX = (width + 7) / 8;
+                            progressiveBlocksY = (height + 7) / 8;
+                            progressiveCoefficients = new int[components]
+                                    [progressiveBlocksX * progressiveBlocksY][64];
+                            progressiveAcSeen = new boolean[components];
+                        }
+                        if (scan.ss == 0 && scan.se == 0 && scan.ah == 0 && scan.al == 0
+                                && !progressiveDcSeen && scan.componentIds.length == components) {
+                            progressiveCoefficients = JpegArithmeticDct.decodeDc(
+                                    entropy.segments.get(0), progressiveBlocksX,
+                                    progressiveBlocksY, components, conditioning.dcL,
+                                    conditioning.dcU);
+                            progressiveDcSeen = true;
+                        } else if (scan.ss == 1 && scan.se == 63 && scan.ah == 0 && scan.al == 0
+                                && scan.componentIds.length == 1 && progressiveDcSeen
+                                && !progressiveAcSeen[scan.componentIds[0] - 1]) {
+                            JpegArithmeticDct.decodeAc(entropy.segments.get(0), progressiveBlocksX,
+                                    progressiveBlocksY, scan.componentIds[0] - 1,
+                                    progressiveCoefficients, conditioning.acK);
+                            progressiveAcSeen[scan.componentIds[0] - 1] = true;
+                        } else {
+                            throw new JpegException("unsupported arithmetic progressive scan");
+                        }
+                        progressiveScanSeen = true;
+                        continue;
+                    }
+                    return decodeDctEntropy(width, height, components, precision, quant, scan,
+                            entropy, restartInterval, conditioning);
                 }
-                return decodeLosslessEntropy(width, height, components, precision, scan, entropy);
-            } else if (code == 0xd8 || code == 0xd9 || (code >= 0xd0 && code <= 0xd7)) {
+                return JpegArithmeticLossless.decode(width, height, components, precision,
+                        scan.predictor, restartInterval, entropy.segments,
+                        entropy.restartMarkers, conditioning.dcL, conditioning.dcU);
+            } else if (code == 0xd9) {
+                if (frameMarker == 0xca && progressiveScanSeen && progressiveDcSeen
+                        && allSeen(progressiveAcSeen) && progressiveCoefficients != null) {
+                    return decodeDctCoefficients(width, height, components, precision, quant,
+                            progressiveCoefficients, progressiveBlocksX, progressiveBlocksY);
+                }
+                throw new JpegException("arithmetic JPEG frame has no scan data");
+            } else if (code == 0xd8 || (code >= 0xd0 && code <= 0xd7)) {
                 throw new JpegException("unexpected arithmetic JPEG marker: 0x"
                         + Integer.toHexString(code));
             }
@@ -105,15 +225,36 @@ public final class ArithmeticJpegCodec {
     }
 
     private static byte[] encodeDct(JpegFrame frame, int frameMarker) throws IOException {
-        if (frame.components() != 1 && frame.components() != 3
-                || frame.precision() < 8 || frame.precision() > 12) {
-            throw new JpegException("arithmetic DCT JPEG requires unsigned 8-12 bit mono/RGB samples");
+        return encodeDct(frame, frameMarker, 0, 0, 1, 5);
+    }
+
+    private static byte[] encodeDct(JpegFrame frame, int frameMarker, int restartInterval)
+            throws IOException {
+        return encodeDct(frame, frameMarker, restartInterval, 0, 1, 5);
+    }
+
+    private static byte[] encodeDct(JpegFrame frame, int frameMarker, int restartInterval,
+            int dcL, int dcU, int acK)
+            throws IOException {
+        validateDctFrame(frame);
+        if (restartInterval < 0 || restartInterval > 0xffff) {
+            throw new JpegException("arithmetic JPEG restart interval must fit in 16 bits");
         }
+        validateConditioning(dcL, dcU, acK);
         QuantizationTable[] quant = {
             QuantizationTable.of(JpegTables.standardLuminanceQuantization()),
             QuantizationTable.of(JpegTables.standardChrominanceQuantization())};
         int blocksX = (frame.width() + 7) / 8;
         int blocksY = (frame.height() + 7) / 8;
+        int[][][] coefficients = computeCoefficients(frame, quant, blocksX, blocksY);
+        JpegArithmeticDct.Encoded entropy = JpegArithmeticDct.encodeSegments(coefficients,
+                blocksX, blocksY, frame.components(), restartInterval, dcL, dcU, acK);
+        return wrap(frame, frameMarker, quant, restartInterval, entropy.segments,
+                entropy.restartMarkers, frame.components() == 3, dcL, dcU, acK);
+    }
+
+    private static int[][][] computeCoefficients(JpegFrame frame, QuantizationTable[] quant,
+            int blocksX, int blocksY) {
         int[][][] coefficients = new int[frame.components()][blocksX * blocksY][64];
         for (int by = 0; by < blocksY; by++) {
             for (int bx = 0; bx < blocksX; bx++) {
@@ -136,66 +277,40 @@ public final class ArithmeticJpegCodec {
                 }
             }
         }
-        BinaryEncoder entropy = new BinaryEncoder();
-        int[] previous = new int[frame.components()];
-        for (int by = 0; by < blocksY; by++) {
-            for (int bx = 0; bx < blocksX; bx++) {
-                for (int component = 0; component < frame.components(); component++) {
-                    int[] block = coefficients[component][by * blocksX + bx];
-                    int difference = block[0] - previous[component];
-                    previous[component] = block[0];
-                    writeSigned(entropy, difference);
-                    int run = 0;
-                    for (int zig = 1; zig < 64; zig++) {
-                        int value = block[JpegZigZag.ORDER[zig]];
-                        if (value == 0) {
-                            run++;
-                            continue;
-                        }
-                        while (run >= 16) {
-                            writeNibble(entropy, 15);
-                            writeNibble(entropy, 0);
-                            run -= 16;
-                        }
-                        writeNibble(entropy, run);
-                        int size = category(value);
-                        writeNibble(entropy, size);
-                        entropy.writeBits(value < 0 ? value + (1 << size) - 1 : value, size);
-                        run = 0;
-                    }
-                    if (run != 0) {
-                        writeNibble(entropy, 0);
-                        writeNibble(entropy, 0);
-                    }
-                }
-            }
-        }
-        return wrap(frame, frameMarker, quant, entropy.finish(), frame.components() == 3);
+        return coefficients;
     }
 
-    private static byte[] encodeLossless(JpegFrame frame, int frameMarker) throws IOException {
-        if (frame.components() != 1 && frame.components() != 3
-                || frame.precision() < 8 || frame.precision() > 16) {
-            throw new JpegException("arithmetic lossless JPEG requires unsigned 8-16 bit samples");
+    private static void validateDctFrame(JpegFrame frame) throws IOException {
+        if (frame == null || (frame.components() != 1 && frame.components() != 3)
+                || frame.precision() < 8 || frame.precision() > 12) {
+            throw new JpegException("arithmetic DCT JPEG requires unsigned 8-12 bit mono/RGB samples");
         }
-        BinaryEncoder entropy = new BinaryEncoder();
-        int[] previous = new int[frame.width() * frame.height() * frame.components()];
-        for (int y = 0; y < frame.height(); y++) {
-            for (int x = 0; x < frame.width(); x++) {
-                for (int component = 0; component < frame.components(); component++) {
-                    int index = (y * frame.width() + x) * frame.components() + component;
-                    int prediction = x == 0 ? 1 << (frame.precision() - 1)
-                            : previous[index - frame.components()];
-                    writeSigned(entropy, frame.sample(x, y, component) - prediction);
-                    previous[index] = frame.sample(x, y, component);
-                }
-            }
-        }
-        return wrap(frame, frameMarker, null, entropy.finish(), false);
+    }
+
+    private static byte[] encodeLossless(JpegFrame frame, int frameMarker, int predictor,
+            int restartInterval) throws IOException {
+        return encodeLossless(frame, frameMarker, predictor, restartInterval, 0, 1);
+    }
+
+    private static byte[] encodeLossless(JpegFrame frame, int frameMarker, int predictor,
+            int restartInterval, int dcL, int dcU) throws IOException {
+        JpegArithmeticLossless.Encoded entropy = JpegArithmeticLossless.encode(frame, predictor,
+                restartInterval, dcL, dcU);
+        return wrapLossless(frame, frameMarker, predictor, restartInterval,
+                entropy.segments, entropy.restartMarkers, dcL, dcU);
     }
 
     private static byte[] wrap(JpegFrame frame, int frameMarker, QuantizationTable[] quant,
             byte[] entropy, boolean color) throws IOException {
+        List<byte[]> segments = new ArrayList<byte[]>();
+        segments.add(entropy);
+        return wrap(frame, frameMarker, quant, 0, segments, new ArrayList<Integer>(), color,
+                0, 1, 5);
+    }
+
+    private static byte[] wrap(JpegFrame frame, int frameMarker, QuantizationTable[] quant,
+            int restartInterval, List<byte[]> segments, List<Integer> restartMarkers,
+            boolean color, int dcL, int dcU, int acK) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         output.write(0xff);
@@ -207,9 +322,20 @@ public final class ArithmeticJpegCodec {
             }
         }
         writeFrameHeader(output, frame, frameMarker);
-        JpegMarkerWriter.write(output, 0xcc, new byte[] {0, 0, 0x10, 0});
+        if (restartInterval != 0) {
+            JpegMarkerWriter.write(output, 0xdd,
+                    new byte[] {(byte) (restartInterval >>> 8), (byte) restartInterval});
+        }
+        JpegMarkerWriter.write(output, 0xcc,
+                new byte[] {0, (byte) ((dcU << 4) | dcL), 0x10, (byte) acK});
         JpegMarkerWriter.write(output, 0xda, scanHeader(frame.components()));
-        output.write(entropy);
+        for (int i = 0; i < segments.size(); i++) {
+            output.write(segments.get(i));
+            if (i < restartMarkers.size()) {
+                output.write(0xff);
+                output.write(restartMarkers.get(i));
+            }
+        }
         output.write(0xff);
         output.write(0xd9);
         output.flush();
@@ -217,37 +343,29 @@ public final class ArithmeticJpegCodec {
     }
 
     private static JpegFrame decodeDctEntropy(int width, int height, int components, int precision,
-            Map<Integer, QuantizationTable> quant, ScanHeader scan, byte[] entropy)
+            Map<Integer, QuantizationTable> quant, ScanHeader scan, EntropySegments entropy,
+            int restartInterval, Conditioning conditioning)
             throws IOException {
         int blocksX = (width + 7) / 8;
         int blocksY = (height + 7) / 8;
-        BinaryDecoder bits = new BinaryDecoder(entropy);
-        int[] previous = new int[components];
+        int[][][] coefficients = restartInterval == 0
+                ? JpegArithmeticDct.decode(entropy.segments.get(0), blocksX, blocksY, components,
+                        conditioning.dcL, conditioning.dcU, conditioning.acK)
+                : JpegArithmeticDct.decodeSegments(entropy.segments, blocksX, blocksY,
+                        components, restartInterval, entropy.restartMarkers,
+                        conditioning.dcL, conditioning.dcU, conditioning.acK);
+        return decodeDctCoefficients(width, height, components, precision, quant, coefficients,
+                blocksX, blocksY);
+    }
+
+    private static JpegFrame decodeDctCoefficients(int width, int height, int components,
+            int precision, Map<Integer, QuantizationTable> quant, int[][][] coefficients,
+            int blocksX, int blocksY) throws IOException {
         int[] samples = new int[width * height * components];
         for (int by = 0; by < blocksY; by++) {
             for (int bx = 0; bx < blocksX; bx++) {
                 for (int component = 0; component < components; component++) {
-                    int[] block = new int[64];
-                    int difference = readSigned(bits);
-                    block[0] = previous[component] + difference;
-                    previous[component] = block[0];
-                    int zig = 1;
-                    while (zig < 64) {
-                        int run = readNibble(bits);
-                        int size = readNibble(bits);
-                        if (run == 0 && size == 0) {
-                            break;
-                        }
-                        if (size == 0 && run == 15) {
-                            zig += 16;
-                            continue;
-                        }
-                        if (size == 0 || zig + run >= 64) {
-                            throw new JpegException("invalid arithmetic JPEG AC run");
-                        }
-                        zig += run;
-                        block[JpegZigZag.ORDER[zig++]] = readSigned(bits, size);
-                    }
+                    int[] block = coefficients[component][by * blocksX + bx];
                     QuantizationTable table = quant.get(component == 0 ? 0 : 1);
                     if (table == null) {
                         throw new JpegException("arithmetic JPEG scan references missing quantization table");
@@ -265,26 +383,6 @@ public final class ArithmeticJpegCodec {
                                     = Math.max(0, Math.min((1 << precision) - 1, value));
                         }
                     }
-                }
-            }
-        }
-        return JpegFrame.of(width, height, components, samples, precision);
-    }
-
-    private static JpegFrame decodeLosslessEntropy(int width, int height, int components,
-            int precision, ScanHeader scan, byte[] entropy) throws IOException {
-        BinaryDecoder bits = new BinaryDecoder(entropy);
-        int[] samples = new int[width * height * components];
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                for (int component = 0; component < components; component++) {
-                    int index = (y * width + x) * components + component;
-                    int prediction = x == 0 ? 1 << (precision - 1) : samples[index - components];
-                    int value = prediction + readSigned(bits);
-                    if (value < 0 || value >= (1 << precision)) {
-                        throw new JpegException("arithmetic JPEG lossless sample is out of range");
-                    }
-                    samples[index] = value;
                 }
             }
         }
@@ -319,29 +417,164 @@ public final class ArithmeticJpegCodec {
         }
     }
 
-    private static ScanHeader parseScan(byte[] payload, int components) throws IOException {
-        if (payload.length != 4 + components * 2 || (payload[0] & 0xff) != components) {
+    private static Conditioning parseArithmeticConditioning(byte[] payload) throws IOException {
+        if (payload.length == 0 || (payload.length & 1) != 0) {
+            throw new JpegException("invalid arithmetic JPEG DAC marker");
+        }
+        Conditioning result = new Conditioning(0, 1, 5);
+        for (int offset = 0; offset < payload.length; offset += 2) {
+            int table = payload[offset] & 0xff;
+            int value = payload[offset + 1] & 0xff;
+            int id = table & 0x0f;
+            if (id > 3) {
+                throw new JpegException("invalid arithmetic JPEG DAC table id");
+            }
+            if ((table & 0xf0) == 0) {
+                int l = value & 0x0f;
+                int u = value >>> 4;
+                if (id != 0 || l > u || u > 15) {
+                    throw new JpegException("invalid arithmetic JPEG DC conditioning");
+                }
+                result = new Conditioning(l, u, result.acK);
+            } else if ((table & 0xf0) != 0x10) {
+                throw new JpegException("invalid arithmetic JPEG DAC table class");
+            } else {
+                if (id != 0 || (value & 0xf0) != 0) {
+                    throw new JpegException("invalid arithmetic JPEG AC conditioning");
+                }
+                result = new Conditioning(result.dcL, result.dcU, value & 0x0f);
+            }
+        }
+        validateConditioning(result.dcL, result.dcU, result.acK);
+        return result;
+    }
+
+    private static void validateConditioning(int dcL, int dcU, int acK) throws IOException {
+        if (dcL < 0 || dcL > dcU || dcU > 15 || acK < 0 || acK > 63) {
+            throw new JpegException("invalid arithmetic JPEG conditioning parameters");
+        }
+    }
+
+    private static ScanHeader parseScan(byte[] payload, int components, boolean lossless)
+            throws IOException {
+        int scanComponents = payload.length < 1 ? 0 : payload[0] & 0xff;
+        if (scanComponents < 1 || scanComponents > components
+                || payload.length != 4 + scanComponents * 2) {
             throw new JpegException("invalid arithmetic JPEG SOS header");
+        }
+        int[] componentIds = new int[scanComponents];
+        for (int component = 0; component < scanComponents; component++) {
+            componentIds[component] = payload[1 + component * 2] & 0xff;
+            if (componentIds[component] < 1 || componentIds[component] > components) {
+                throw new JpegException("invalid arithmetic JPEG scan component");
+            }
         }
         int ss = payload[payload.length - 3] & 0xff;
         int se = payload[payload.length - 2] & 0xff;
-        if (ss != 0 || se != 63) {
+        int ahAl = payload[payload.length - 1] & 0xff;
+        if ((lossless ? (ss < 1 || ss > 7 || se != 0) : (ss > se || se > 63))
+                || (ahAl & 0x0f) != 0) {
             throw new JpegException("unsupported arithmetic JPEG scan range");
         }
-        return new ScanHeader();
+        for (int component = 0; component < scanComponents; component++) {
+            int selector = payload[2 + component * 2] & 0xff;
+            int expected = 0;
+            if (selector != expected) {
+                throw new JpegException("unsupported arithmetic JPEG conditioning table");
+            }
+        }
+        return new ScanHeader(componentIds, ss, se, ahAl >>> 4, ahAl & 0x0f);
     }
 
     private static byte[] scanHeader(int components) {
+        return scanHeader(components, 0, 0, 63, 0);
+    }
+
+    private static byte[] scanHeader(int components, int componentOffset,
+            int ss, int se, int ahAl) {
+        byte[] payload = new byte[4 + components * 2];
+        payload[0] = (byte) components;
+        for (int component = 0; component < components; component++) {
+            payload[1 + component * 2] = (byte) (componentOffset + component + 1);
+            payload[2 + component * 2] = 0;
+        }
+        payload[payload.length - 3] = (byte) ss;
+        payload[payload.length - 2] = (byte) se;
+        payload[payload.length - 1] = (byte) ahAl;
+        return payload;
+    }
+
+    private static byte[] losslessScanHeader(int components, int predictor) {
         byte[] payload = new byte[4 + components * 2];
         payload[0] = (byte) components;
         for (int component = 0; component < components; component++) {
             payload[1 + component * 2] = (byte) (component + 1);
             payload[2 + component * 2] = 0;
         }
-        payload[payload.length - 3] = 0;
-        payload[payload.length - 2] = 63;
+        payload[payload.length - 3] = (byte) predictor;
+        payload[payload.length - 2] = 0;
         payload[payload.length - 1] = 0;
         return payload;
+    }
+
+    private static byte[] wrapLossless(JpegFrame frame, int frameMarker, int predictor,
+            int restartInterval, List<byte[]> segments, List<Integer> restartMarkers,
+            int dcL, int dcU)
+            throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
+        output.write(0xff);
+        output.write(0xd8);
+        writeFrameHeader(output, frame, frameMarker);
+        if (restartInterval != 0) {
+            JpegMarkerWriter.write(output, 0xdd,
+                    new byte[] {(byte) (restartInterval >>> 8), (byte) restartInterval});
+        }
+        JpegMarkerWriter.write(output, 0xcc, new byte[] {0, (byte) ((dcU << 4) | dcL)});
+        JpegMarkerWriter.write(output, 0xda, losslessScanHeader(frame.components(), predictor));
+        for (int i = 0; i < segments.size(); i++) {
+            output.write(segments.get(i));
+            if (i < restartMarkers.size()) {
+                output.write(0xff);
+                output.write(restartMarkers.get(i));
+            }
+        }
+        output.write(0xff);
+        output.write(0xd9);
+        output.flush();
+        return bytes.toByteArray();
+    }
+
+    private static EntropySegments readEntropySegments(ImageInputStream input) throws IOException {
+        List<byte[]> segments = new ArrayList<byte[]>();
+        List<Integer> restartMarkers = new ArrayList<Integer>();
+        ByteArrayOutputStream segment = new ByteArrayOutputStream();
+        while (true) {
+            int value = input.read();
+            if (value < 0) {
+                throw new JpegException("truncated arithmetic JPEG scan");
+            }
+            if (value != 0xff) {
+                segment.write(value);
+                continue;
+            }
+            int next = input.read();
+            if (next < 0) {
+                throw new JpegException("truncated arithmetic JPEG scan marker");
+            }
+            if (next == 0) {
+                segment.write(0xff);
+                segment.write(0);
+            } else if (next >= 0xd0 && next <= 0xd7) {
+                segments.add(segment.toByteArray());
+                segment = new ByteArrayOutputStream();
+                restartMarkers.add(next);
+            } else {
+                input.seek(input.getStreamPosition() - 2);
+                segments.add(segment.toByteArray());
+                return new EntropySegments(segments, restartMarkers);
+            }
+        }
     }
 
     private static void writeFrameHeader(ImageOutputStream output, JpegFrame frame, int marker)
@@ -371,172 +604,63 @@ public final class ArithmeticJpegCodec {
         JpegMarkerWriter.write(output, 0xdb, payload);
     }
 
-    private static int category(int value) {
-        int magnitude = Math.abs(value);
-        int result = 0;
-        while (magnitude != 0) {
-            result++;
-            magnitude >>>= 1;
-        }
-        return result;
-    }
-
-    private static void writeSigned(BinaryEncoder bits, int value) throws IOException {
-        int size = category(value);
-        writeUnary(bits, size);
-        if (size != 0) {
-            bits.writeBits(value < 0 ? value + (1 << size) - 1 : value, size);
-        }
-    }
-
-    private static int readSigned(BinaryDecoder bits) throws IOException {
-        int size = readUnary(bits);
-        return readSigned(bits, size);
-    }
-
-    private static int readSigned(BinaryDecoder bits, int size) throws IOException {
-        if (size == 0) {
-            return 0;
-        }
-        int value = bits.readBits(size);
-        return (value & (1 << (size - 1))) != 0 ? value : value - ((1 << size) - 1);
-    }
-
-    private static void writeUnary(BinaryEncoder bits, int value) throws IOException {
-        if (value > 31) {
-            throw new JpegException("arithmetic JPEG magnitude is too large");
-        }
-        for (int i = 0; i < value; i++) {
-            bits.writeBit(1);
-        }
-        bits.writeBit(0);
-    }
-
-    private static int readUnary(BinaryDecoder bits) throws IOException {
-        int value = 0;
-        while (bits.readBit() != 0) {
-            if (++value > 31) {
-                throw new JpegException("arithmetic JPEG magnitude is too large");
-            }
-        }
-        return value;
-    }
-
-    private static void writeNibble(BinaryEncoder bits, int value) throws IOException {
-        bits.writeBits(value, 4);
-    }
-
-    private static int readNibble(BinaryDecoder bits) throws IOException {
-        return bits.readBits(4);
-    }
-
     private static int u16(byte[] bytes, int offset) {
         return ((bytes[offset] & 0xff) << 8) | (bytes[offset + 1] & 0xff);
     }
 
+    private static boolean allSeen(boolean[] values) {
+        if (values == null) {
+            return false;
+        }
+        for (boolean value : values) {
+            if (!value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static final class ScanHeader {
-    }
+        private final int[] componentIds;
+        private final int ss;
+        private final int se;
+        private final int predictor;
+        private final int pointTransform;
+        private final int ah;
+        private final int al;
 
-    private static final class BinaryEncoder {
-        private final ByteArrayOutputStream output = new ByteArrayOutputStream();
-        private long low;
-        private long high = 0xffffffffL;
-        private int probabilityZero = 32768;
-
-        void writeBit(int bit) throws IOException {
-            long range = high - low + 1;
-            long split = low + ((range * probabilityZero) >>> 16) - 1;
-            if (bit == 0) {
-                high = split;
-                probabilityZero += (65535 - probabilityZero) >>> 5;
-            } else {
-                low = split + 1;
-                probabilityZero -= probabilityZero >>> 5;
-            }
-            while (((low ^ high) & 0xff000000L) == 0) {
-                output.write((int) (low >>> 24));
-                low = (low << 8) & 0xffffffffL;
-                high = ((high << 8) & 0xffffffffL) | 0xff;
-            }
-        }
-
-        void writeBits(int value, int count) throws IOException {
-            for (int bit = count - 1; bit >= 0; bit--) {
-                writeBit((value >>> bit) & 1);
-            }
-        }
-
-        byte[] finish() throws IOException {
-            for (int i = 0; i < 4; i++) {
-                output.write((int) (low >>> 24));
-                low = (low << 8) & 0xffffffffL;
-            }
-            byte[] raw = output.toByteArray();
-            ByteArrayOutputStream stuffed = new ByteArrayOutputStream(raw.length + 8);
-            for (byte value : raw) {
-                stuffed.write(value & 0xff);
-                if ((value & 0xff) == 0xff) {
-                    stuffed.write(0);
-                }
-            }
-            return stuffed.toByteArray();
+        private ScanHeader(int[] componentIds, int ss, int se, int successiveHigh,
+                int successiveLow) {
+            this.componentIds = componentIds;
+            this.ss = ss;
+            this.se = se;
+            this.predictor = ss;
+            this.pointTransform = successiveLow;
+            this.ah = successiveHigh;
+            this.al = successiveLow;
         }
     }
 
-    private static final class BinaryDecoder {
-        private final byte[] input;
-        private int offset;
-        private long code;
-        private long low;
-        private long high = 0xffffffffL;
-        private int probabilityZero = 32768;
+    private static final class EntropySegments {
+        private final List<byte[]> segments;
+        private final List<Integer> restartMarkers;
 
-        BinaryDecoder(byte[] stuffed) throws IOException {
-            ByteArrayOutputStream raw = new ByteArrayOutputStream(stuffed.length);
-            for (int i = 0; i < stuffed.length; i++) {
-                int value = stuffed[i] & 0xff;
-                raw.write(value);
-                if (value == 0xff && i + 1 < stuffed.length && stuffed[i + 1] == 0) {
-                    i++;
-                }
-            }
-            input = raw.toByteArray();
-            for (int i = 0; i < 4; i++) {
-                code = (code << 8) | nextByte();
-            }
-        }
-
-        int readBit() throws IOException {
-            long range = high - low + 1;
-            long split = low + ((range * probabilityZero) >>> 16) - 1;
-            int bit;
-            if (code <= split) {
-                high = split;
-                probabilityZero += (65535 - probabilityZero) >>> 5;
-                bit = 0;
-            } else {
-                low = split + 1;
-                probabilityZero -= probabilityZero >>> 5;
-                bit = 1;
-            }
-            while (((low ^ high) & 0xff000000L) == 0) {
-                low = (low << 8) & 0xffffffffL;
-                high = ((high << 8) & 0xffffffffL) | 0xff;
-                code = ((code << 8) & 0xffffffffL) | nextByte();
-            }
-            return bit;
-        }
-
-        int readBits(int count) throws IOException {
-            int value = 0;
-            for (int i = 0; i < count; i++) {
-                value = (value << 1) | readBit();
-            }
-            return value;
-        }
-
-        private int nextByte() {
-            return offset < input.length ? input[offset++] & 0xff : 0;
+        private EntropySegments(List<byte[]> segments, List<Integer> restartMarkers) {
+            this.segments = segments;
+            this.restartMarkers = restartMarkers;
         }
     }
+
+    private static final class Conditioning {
+        private final int dcL;
+        private final int dcU;
+        private final int acK;
+
+        private Conditioning(int dcL, int dcU, int acK) {
+            this.dcL = dcL;
+            this.dcU = dcU;
+            this.acK = acK;
+        }
+    }
+
 }

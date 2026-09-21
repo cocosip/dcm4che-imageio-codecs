@@ -23,7 +23,7 @@ public final class JpegFrame {
 
     public static JpegFrame of(int width, int height, int components, int[] samples,
             int precision) {
-        if (width <= 0 || height <= 0 || (components != 1 && components != 3)) {
+        if (width <= 0 || height <= 0 || (components != 1 && components != 3 && components != 4)) {
             throw new IllegalArgumentException("invalid JPEG frame dimensions/components");
         }
         if (precision < 8 || precision > 16) {

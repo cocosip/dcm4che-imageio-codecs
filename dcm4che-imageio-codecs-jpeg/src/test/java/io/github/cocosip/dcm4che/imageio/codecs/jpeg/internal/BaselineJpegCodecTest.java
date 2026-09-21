@@ -147,4 +147,5 @@ class BaselineJpegCodecTest {
         }
         throw new AssertionError("restart marker not found");
     }
+
 }

@@ -1,11 +1,39 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
 class DifferentialJpegCodecTest {
+    @Test
+    void differentialLosslessUsesExplicitReferenceFrame() throws Exception {
+        int[] referenceSamples = new int[7 * 5];
+        int[] currentSamples = new int[referenceSamples.length];
+        for (int i = 0; i < referenceSamples.length; i++) {
+            referenceSamples[i] = (i * 257 + 100) & 0xfff;
+            currentSamples[i] = (referenceSamples[i] + (i % 9) - 4) & 0xfff;
+        }
+        JpegFrame reference = JpegFrame.of(7, 5, 1, referenceSamples, 12);
+        JpegFrame current = JpegFrame.of(7, 5, 1, currentSamples, 12);
+
+        byte[] encoded = DifferentialJpegCodec.encode(current, reference,
+                DifferentialProcess.LOSSLESS);
+        JpegFrame decoded = DifferentialJpegCodec.decode(encoded, reference);
+
+        assertEquals(0, maxDifference(current.samples(), decoded.samples()));
+    }
+
+    @Test
+    void differentialRejectsMissingOrIncompatibleReference() {
+        JpegFrame current = JpegFrame.of(4, 4, 1, new int[16]);
+        assertThrows(IllegalArgumentException.class, () -> DifferentialJpegCodec.encode(current,
+                null, DifferentialProcess.LOSSLESS));
+        assertThrows(IllegalArgumentException.class, () -> DifferentialJpegCodec.encode(current,
+                JpegFrame.of(3, 4, 1, new int[12]), DifferentialProcess.LOSSLESS));
+    }
+
     @Test
     void roundTripsDifferentialSequentialDct() throws Exception {
         int[] samples = new int[13 * 9];

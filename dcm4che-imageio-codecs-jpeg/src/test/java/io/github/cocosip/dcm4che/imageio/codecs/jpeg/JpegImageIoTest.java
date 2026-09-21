@@ -133,6 +133,21 @@ class JpegImageIoTest {
     }
 
     @Test
+    void exposesRestartIntervalThroughProgressiveImageWriter() throws Exception {
+        ImageDescriptor descriptor = descriptor(11, 17, 1, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        ProgressiveJpegImageWriter writer = new ProgressiveJpegImageWriter(null);
+        JpegImageWriteParam param = (JpegImageWriteParam) writer.getDefaultWriteParam();
+        param.setRestartInterval(2);
+
+        byte[] encoded = writeProgressive(descriptor, source, param);
+
+        assertTrue(hasMarker(encoded, 0xdd));
+        assertTrue(hasRestartMarker(encoded));
+        assertJpegTolerance(source, readProgressive(descriptor, encoded), 80);
+    }
+
+    @Test
     void exposesRestartIntervalThroughExtendedImageWriter() throws Exception {
         ImageDescriptor descriptor = descriptor(11, 17, 1, "MONOCHROME2");
         BufferedImage source = DicomImageTypes.createImage(descriptor);
@@ -394,11 +409,16 @@ class JpegImageIoTest {
 
     private static byte[] writeProgressive(ImageDescriptor descriptor, BufferedImage image)
             throws Exception {
+        return writeProgressive(descriptor, image, null);
+    }
+
+    private static byte[] writeProgressive(ImageDescriptor descriptor, BufferedImage image,
+            ImageWriteParam param) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         DescriptorOutputStream output = new DescriptorOutputStream(bytes, descriptor);
         ProgressiveJpegImageWriter writer = new ProgressiveJpegImageWriter(null);
         writer.setOutput(output);
-        writer.write(null, new IIOImage(image, null, null), writer.getDefaultWriteParam());
+        writer.write(null, new IIOImage(image, null, null), param);
         output.flush();
         return bytes.toByteArray();
     }

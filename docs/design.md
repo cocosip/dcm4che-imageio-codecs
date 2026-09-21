@@ -303,7 +303,8 @@ This project replaces that mapping.
 #### JPEG implementation status in this repository
 
 The current `dcm4che-imageio-codecs-jpeg` module implements the four DICOM Phase 1 JPEG
-transfer syntaxes plus a generic progressive Huffman ImageIO path. The following matrix
+transfer syntaxes. Some raw progressive/arithmetic/differential classes may remain as
+internal experiments, but they are not public DICOM capabilities. The following matrix
 is the authoritative status for the code currently in the repository:
 
 | Capability | Status | Details |
@@ -321,20 +322,21 @@ is the authoritative status for the code currently in the repository:
 | JPEG Extended Process 2/4 `.51` | Implemented | Pure Java SOF1 sequential Huffman path supports unsigned 8/12-bit SF444 samples, with dedicated ImageIO SPI and descriptor-backed 16-bit container handling. |
 | JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding supports unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, predictor 1 encoding, DRI/RST validation, and ImageIO point-transform control. |
 | JPEG Lossless Process 14 SV1 `.70` | Implemented | Dedicated ImageIO adapters enforce the fixed predictor-1 Process 14 SV1 contract; DRI/RST and ImageIO point-transform control are supported. |
-| Progressive JPEG | Implemented (generic ImageIO) | SOF2 sequential/progressive Huffman encode/decode supports the implemented scan scripts and JDK progressive input; it is not a DICOM Phase 1 transfer syntax. |
-| Arithmetic-coded JPEG | Experimental only | The internal class is a private binary/range-code round-trip prototype, not an ISO JPEG QM coder and not registered as an interoperable ImageIO provider. |
-| Differential JPEG | Experimental only | The internal class does not yet implement ISO differential reference-frame semantics and is not registered as an interoperable ImageIO provider. |
-| Restart intervals (`DRI`/`RST`) | Implemented for sequential/lossless paths | Lossless and sequential DCT paths expose or consume restart intervals and validate marker order; progressive restart scans are not exposed yet. |
-| CMYK/YCCK JPEG | Not implemented | Component counts and color models outside the covered 1/3-component path are rejected. |
+| Progressive JPEG | Not part of the public DICOM codec | Raw SOF2 support is outside the current scope and is not mapped to a DICOM transfer syntax. |
+| Arithmetic-coded JPEG | Not part of the public DICOM codec | Arithmetic JPEG is outside the current scope and is not registered as a DICOM codec. |
+| Differential/Hierarchical JPEG | Not implemented | Retired hierarchical transfer syntaxes are deliberately not supported or registered. |
+| Restart intervals (`DRI`/`RST`) | Implemented for sequential/lossless Huffman paths | DCT and lossless paths expose or consume restart intervals and validate marker order. |
+| CMYK/YCCK JPEG | Not implemented | dcm4che has no public CMYK/YCCK photometric or pixel-data contract; this project deliberately does not add one. |
 | ImageReadParam regions/subsampling/band selection | Implemented | Source region, subsampling, destination offset, and source/destination band selection are applied by the reader. |
-| Writer quality/compression parameters | Implemented for lossy paths | Baseline, Extended, and Progressive writers map ImageIO compression quality to quantization; lossless uses point transform and restart controls instead of lossy quality. |
+| Writer quality/compression parameters | Implemented for lossy paths | Baseline and Extended writers map ImageIO compression quality to quantization; lossless uses point transform and restart controls instead of lossy quality. |
 | Multi-frame orchestration | Not implemented in this module | The current core exposes one logical frame per ImageIO invocation; dcm4che remains responsible for frame orchestration. |
 
-The implemented DICOM subset is therefore suitable for Baseline `.50` 8-bit, Extended
-`.51` unsigned 8/12-bit monochrome/RGB, Lossless `.57` unsigned 8/12/16-bit
-monochrome/RGB, and `.70` SV1 through dedicated reader/writer adapters. Generic
-progressive Huffman support is available, while arithmetic, differential, and CMYK/YCCK
-remain outside the interoperable scope until they have standard cross-codec fixtures.
+The implemented public DICOM subset is therefore limited to Baseline `.50` 8-bit,
+Extended `.51` unsigned 8/12-bit monochrome/RGB, Lossless `.57` unsigned 8/12/16-bit
+monochrome/RGB, and `.70` SV1 through dedicated reader/writer adapters. Progressive,
+arithmetic, differential/hierarchical, and CMYK/YCCK JPEG are deliberately outside the
+current public codec scope; see `docs/jpeg-complete-development-plan.md` for the active
+JPEG work list.
 
 ### 6.3 JPEG-LS Family
 

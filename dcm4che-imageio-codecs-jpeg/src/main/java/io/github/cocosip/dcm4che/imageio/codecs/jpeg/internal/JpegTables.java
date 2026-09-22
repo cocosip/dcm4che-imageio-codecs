@@ -70,6 +70,12 @@ final class JpegTables {
     static HuffmanTable standardChrominanceDc() { return HuffmanTable.fromDefinition(DC_CHROMA_BITS, DC_CHROMA_VALUES); }
     static HuffmanTable standardLuminanceAc() { return HuffmanTable.fromDefinition(AC_LUMA_BITS, AC_LUMA_VALUES); }
     static HuffmanTable standardChrominanceAc() { return HuffmanTable.fromDefinition(AC_CHROMA_BITS, AC_CHROMA_VALUES); }
+    static HuffmanTable extendedDc() {
+        return HuffmanTable.fromDefinition(extendedDcBits(), extendedDcValues());
+    }
+    static HuffmanTable extendedAc() {
+        return HuffmanTable.fromDefinition(extendedAcBits(), extendedAcValues());
+    }
     static int[] luminanceDcBits() { return DC_LUMA_BITS.clone(); }
     static int[] luminanceDcValues() { return DC_LUMA_VALUES.clone(); }
     static int[] chrominanceDcBits() { return DC_CHROMA_BITS.clone(); }
@@ -78,6 +84,35 @@ final class JpegTables {
     static int[] luminanceAcValues() { return AC_LUMA_VALUES.clone(); }
     static int[] chrominanceAcBits() { return AC_CHROMA_BITS.clone(); }
     static int[] chrominanceAcValues() { return AC_CHROMA_VALUES.clone(); }
+    static int[] extendedDcBits() {
+        int[] counts = new int[16];
+        counts[4] = 16;
+        return counts;
+    }
+    static int[] extendedDcValues() {
+        int[] values = new int[16];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        return values;
+    }
+    static int[] extendedAcBits() {
+        int[] counts = new int[16];
+        counts[7] = 226;
+        return counts;
+    }
+    static int[] extendedAcValues() {
+        int[] values = new int[226];
+        int offset = 0;
+        values[offset++] = 0;
+        values[offset++] = 0xf0;
+        for (int run = 0; run < 16; run++) {
+            for (int size = 1; size <= 14; size++) {
+                values[offset++] = (run << 4) | size;
+            }
+        }
+        return values;
+    }
 
     private static int[] scaledQuantization(int[] base, float quality) {
         if (quality < 0.0f) {

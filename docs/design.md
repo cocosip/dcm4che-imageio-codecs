@@ -311,25 +311,27 @@ is the authoritative status for the code currently in the repository:
 |---|---|---|
 | Baseline transfer syntax `.50` (`1.2.840.10008.1.2.4.50`) | Implemented | Pure Java encoder/decoder and dcm4che reader/writer properties are present. |
 | 8-bit precision | Implemented | SOF0 only; samples are stored as unsigned 8-bit values. |
-| Sequential Huffman coding | Implemented | DCT, quantization, zig-zag, DC differential coding, AC run-length coding, byte stuffing, DQT/DHT/SOS/EOI handling. |
+| Sequential Huffman coding | Implemented | DCT, quantization, zig-zag, DC differential coding, AC run-length coding, byte stuffing, DQT/DHT/SOS/EOI handling. SOF quantization and SOS DC/AC table selectors 0-3 are honored per component; missing referenced tables are rejected. |
+| Quantization/Huffman table precision | Implemented | Decoders accept 8-bit and 16-bit DQT values. The 12-bit Extended encoder emits dedicated DC/AC definitions covering the larger coefficient categories without changing Baseline tables. |
 | Grayscale | Implemented | `SamplesPerPixel=1`, `MONOCHROME1` and `MONOCHROME2`; `MONOCHROME1` is inverted at the image boundary. |
 | Three-component RGB | Implemented | `SamplesPerPixel=3` with interleaved 1x1 component sampling. |
-| `YBR_FULL` metadata | Implemented | Lossy RGB input is converted to YCbCr at the image boundary; YBR samples remain in YBR order for DICOM output. |
-| `YBR_FULL_422` | Implemented | Sequential Huffman paths emit and consume 4:2:2 sampling with shared chroma reconstruction. |
+| `YBR_FULL` metadata | Implemented | Lossy sRGB input is converted to YCbCr before encoding; decoded lossy three-component YBR samples are converted to RGB for the sRGB `BufferedImage` boundary. |
+| `YBR_FULL_422` | Implemented with declared boundary | Baseline and 8-bit Extended paths emit and consume 4:2:2 sampling with shared chroma reconstruction. Public 12-bit Extended 4:2:2 input is rejected; 12-bit Extended remains SF444. |
 | ImageIO SPI | Implemented | Reader/writer SPI service entries and the `jpeg-ext` format name are registered. |
 | Descriptor-backed dcm4che streams | Implemented | Uses the existing `ImageDescriptor` stream contract and reads/writes one logical frame per invocation. |
 | JDK interoperability | Verified for covered subset | JDK-generated baseline grayscale JPEG can be decoded; Baseline and 8-bit Extended writer output can be decoded by the JDK JPEG reader. |
-| JPEG Extended Process 2/4 `.51` | Implemented | Pure Java SOF1 sequential Huffman path supports unsigned 8/12-bit SF444 samples, with dedicated ImageIO SPI and descriptor-backed 16-bit container handling. |
-| JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding supports unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, predictor 1 encoding, DRI/RST validation, and ImageIO point-transform control. |
+| JPEG Extended Process 2/4 `.51` | Implemented | Pure Java SOF1 sequential Huffman path accepts exactly unsigned 8-bit or 12-bit samples; 12-bit uses SF444 and a 16-bit descriptor container. |
+| JPEG Lossless Process 14 `.57` | Implemented | Pure Java SOF3 predictive Huffman coding accepts exactly unsigned 8/12/16-bit monochrome/RGB, predictors 1-7 on decode, predictor 1 encoding, per-component DC table selectors, DRI/RST validation, and ImageIO point-transform control. |
 | JPEG Lossless Process 14 SV1 `.70` | Implemented | Dedicated ImageIO adapters enforce the fixed predictor-1 Process 14 SV1 contract; DRI/RST and ImageIO point-transform control are supported. |
 | Progressive JPEG | Not part of the public DICOM codec | Raw SOF2 support is outside the current scope and is not mapped to a DICOM transfer syntax. |
 | Arithmetic-coded JPEG | Not part of the public DICOM codec | Arithmetic JPEG is outside the current scope and is not registered as a DICOM codec. |
 | Differential/Hierarchical JPEG | Not implemented | Retired hierarchical transfer syntaxes are deliberately not supported or registered. |
 | Restart intervals (`DRI`/`RST`) | Implemented for sequential/lossless Huffman paths | DCT and lossless paths expose or consume restart intervals and validate marker order. |
 | CMYK/YCCK JPEG | Not implemented | dcm4che has no public CMYK/YCCK photometric or pixel-data contract; this project deliberately does not add one. |
-| ImageReadParam regions/subsampling/band selection | Implemented | Source region, subsampling, destination offset, and source/destination band selection are applied by the reader. |
+| ImageReadParam regions/subsampling/band selection | Implemented | Source region, subsampling factors and offsets, destination offset, and paired source/destination band selection are applied. Destination-only partial mappings are rejected because omitted source bands default to all bands. |
 | Writer quality/compression parameters | Implemented for lossy paths | Baseline and Extended writers map ImageIO compression quality to quantization; lossless uses point transform and restart controls instead of lossy quality. |
 | Multi-frame orchestration | Not implemented in this module | The current core exposes one logical frame per ImageIO invocation; dcm4che remains responsible for frame orchestration. |
+| External interoperability fixtures | Partially verified | JDK Baseline grayscale decode and Java-generated Baseline/8-bit Extended output are covered. External 12-bit Extended and Process 14/SV1 fixtures remain required. |
 
 The implemented public DICOM subset is therefore limited to Baseline `.50` 8-bit,
 Extended `.51` unsigned 8/12-bit monochrome/RGB, Lossless `.57` unsigned 8/12/16-bit

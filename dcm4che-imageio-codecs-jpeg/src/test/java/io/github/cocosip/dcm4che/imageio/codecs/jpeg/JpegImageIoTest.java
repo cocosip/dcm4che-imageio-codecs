@@ -13,6 +13,7 @@ import java.awt.Point;
 import java.awt.Rectangle;
 
 import javax.imageio.IIOImage;
+import javax.imageio.IIOException;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReadParam;
 import javax.imageio.ImageWriteParam;
@@ -27,6 +28,7 @@ import org.dcm4che3.imageio.codec.ImageDescriptor;
 import org.junit.jupiter.api.Test;
 
 import io.github.cocosip.dcm4che.imageio.codecs.core.image.DicomImageTypes;
+import io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal.JpegFrame;
 
 class JpegImageIoTest {
     @Test
@@ -91,6 +93,60 @@ class JpegImageIoTest {
 
         assertJpegTolerance(source, decoded, 80);
         assertInstanceOf(BufferedImage.class, ImageIO.read(new ByteArrayInputStream(encoded)));
+    }
+
+    @Test
+    void convertsSrgbInputToYbrBeforeLossyEncoding() throws Exception {
+        ImageDescriptor descriptor = descriptor(1, 1, 3, "YBR_FULL");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        source.getRaster().setPixel(0, 0, new int[] {255, 0, 0});
+
+        JpegFrame frame = JpegRasterFrames.fromImage(descriptor, source,
+                JpegRasterFrames.Flavor.BASELINE);
+
+        assertEquals(76, frame.sample(0, 0, 0));
+        assertEquals(85, frame.sample(0, 0, 1));
+        assertEquals(255, frame.sample(0, 0, 2));
+    }
+
+    @Test
+    void convertsDecodedYbrToRgbAtLossyImageBoundary() throws Exception {
+        ImageDescriptor descriptor = descriptor(1, 1, 3, "YBR_FULL");
+        JpegFrame frame = JpegFrame.of(1, 1, 3, new int[] {76, 85, 255});
+
+        BufferedImage image = JpegRasterFrames.toImage(descriptor, frame, null,
+                JpegRasterFrames.Flavor.BASELINE);
+
+        assertEquals(254, image.getRaster().getSample(0, 0, 0));
+        assertEquals(0, image.getRaster().getSample(0, 0, 1));
+        assertEquals(0, image.getRaster().getSample(0, 0, 2));
+    }
+
+    @Test
+    void rejectsDecodedFrameWidthMismatch() {
+        ImageDescriptor descriptor = descriptor(2, 3, 1, "MONOCHROME2");
+        JpegFrame frame = JpegFrame.of(2, 2, 1, new int[4]);
+
+        assertThrows(IIOException.class,
+                () -> JpegRasterFrames.toImage(descriptor, frame, null));
+    }
+
+    @Test
+    void rejectsDecodedFrameHeightMismatch() {
+        ImageDescriptor descriptor = descriptor(2, 3, 1, "MONOCHROME2");
+        JpegFrame frame = JpegFrame.of(3, 1, 1, new int[3]);
+
+        assertThrows(IIOException.class,
+                () -> JpegRasterFrames.toImage(descriptor, frame, null));
+    }
+
+    @Test
+    void rejectsDecodedFrameComponentMismatch() {
+        ImageDescriptor descriptor = descriptor(2, 3, 1, "MONOCHROME2");
+        JpegFrame frame = JpegFrame.of(3, 2, 3, new int[18]);
+
+        assertThrows(IIOException.class,
+                () -> JpegRasterFrames.toImage(descriptor, frame, null));
     }
 
     @Test
@@ -301,6 +357,101 @@ class JpegImageIoTest {
     }
 
     @Test
+    void appliesSubsamplingOffsetsToLiteralSourceCoordinates() throws Exception {
+        ImageDescriptor descriptor = descriptor(4, 5, 1, "MONOCHROME2");
+        int[] samples = new int[20];
+        for (int y = 0; y < 4; y++) {
+            for (int x = 0; x < 5; x++) {
+                samples[y * 5 + x] = y * 10 + x;
+            }
+        }
+        ImageReadParam param = new ImageReadParam();
+        param.setSourceRegion(new Rectangle(1, 0, 4, 4));
+        param.setSourceSubsampling(2, 2, 1, 1);
+
+        BufferedImage decoded = JpegRasterFrames.toImage(descriptor,
+                JpegFrame.of(5, 4, 1, samples), param, JpegRasterFrames.Flavor.LOSSLESS);
+
+        assertEquals(2, decoded.getWidth());
+        assertEquals(2, decoded.getHeight());
+        assertEquals(12, decoded.getRaster().getSample(0, 0, 0));
+        assertEquals(14, decoded.getRaster().getSample(1, 0, 0));
+        assertEquals(32, decoded.getRaster().getSample(0, 1, 0));
+        assertEquals(34, decoded.getRaster().getSample(1, 1, 0));
+    }
+
+    @Test
+    void mapsExplicitSourceBandsToDestinationBands() throws Exception {
+        ImageDescriptor descriptor = descriptor(1, 1, 3, "RGB");
+        ImageReadParam param = new ImageReadParam();
+        param.setSourceBands(new int[] {2, 0});
+        param.setDestinationBands(new int[] {0, 2});
+
+        BufferedImage decoded = JpegRasterFrames.toImage(descriptor,
+                JpegFrame.of(1, 1, 3, new int[] {10, 20, 30}), param,
+                JpegRasterFrames.Flavor.LOSSLESS);
+
+        assertEquals(30, decoded.getRaster().getSample(0, 0, 0));
+        assertEquals(0, decoded.getRaster().getSample(0, 0, 1));
+        assertEquals(10, decoded.getRaster().getSample(0, 0, 2));
+    }
+
+    @Test
+    void rejectsDestinationBandsWithoutMatchingSourceBands() {
+        ImageDescriptor descriptor = descriptor(1, 1, 3, "RGB");
+        ImageReadParam param = new ImageReadParam();
+        param.setDestinationBands(new int[] {1});
+
+        assertThrows(IIOException.class, () -> JpegRasterFrames.toImage(descriptor,
+                JpegFrame.of(1, 1, 3, new int[] {10, 20, 30}), param,
+                JpegRasterFrames.Flavor.LOSSLESS));
+    }
+
+    @Test
+    void rejectsNonEightBitBaselineDescriptor() {
+        ImageDescriptor descriptor = descriptor(1, 1, 1, 8, 7, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+
+        assertThrows(IIOException.class, () -> JpegRasterFrames.fromImage(descriptor, source,
+                JpegRasterFrames.Flavor.BASELINE));
+    }
+
+    @Test
+    void rejectsSignedBaselineDescriptor() {
+        ImageDescriptor descriptor = descriptor(1, 1, 1, 8, 8, "MONOCHROME2", true);
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+
+        assertThrows(IIOException.class, () -> JpegRasterFrames.fromImage(descriptor, source,
+                JpegRasterFrames.Flavor.BASELINE));
+    }
+
+    @Test
+    void rejectsUnsupportedExtendedPrecision() {
+        ImageDescriptor descriptor = descriptor(1, 1, 1, 16, 10, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+
+        assertThrows(IIOException.class, () -> JpegRasterFrames.fromImage(descriptor, source,
+                JpegRasterFrames.Flavor.EXTENDED));
+    }
+
+    @Test
+    void rejectsUnsupportedLosslessPrecision() {
+        ImageDescriptor descriptor = descriptor(1, 1, 1, 16, 10, "MONOCHROME2");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+
+        assertThrows(IIOException.class, () -> JpegRasterFrames.fromImage(descriptor, source,
+                JpegRasterFrames.Flavor.LOSSLESS));
+    }
+
+    @Test
+    void rejectsTwelveBitYbrFull422ThroughExtendedImageWriter() throws Exception {
+        ImageDescriptor descriptor = descriptor(1, 1, 3, 16, 12, "YBR_FULL_422");
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+
+        assertThrows(IIOException.class, () -> writeExtended(descriptor, source));
+    }
+
+    @Test
     void roundTripsSixteenBitLosslessThroughDescriptorBackedImageIo() throws Exception {
         ImageDescriptor descriptor = descriptor(4, 5, 1, 16, 16, "MONOCHROME2");
         BufferedImage source = DicomImageTypes.createImage(descriptor);
@@ -507,13 +658,18 @@ class JpegImageIoTest {
 
     private static ImageDescriptor descriptor(int rows, int columns, int samples,
             int bitsAllocated, int bitsStored, String photometric) {
+        return descriptor(rows, columns, samples, bitsAllocated, bitsStored, photometric, false);
+    }
+
+    private static ImageDescriptor descriptor(int rows, int columns, int samples,
+            int bitsAllocated, int bitsStored, String photometric, boolean signed) {
         Attributes attributes = new Attributes();
         attributes.setInt(Tag.Rows, VR.US, rows);
         attributes.setInt(Tag.Columns, VR.US, columns);
         attributes.setInt(Tag.SamplesPerPixel, VR.US, samples);
         attributes.setInt(Tag.BitsAllocated, VR.US, bitsAllocated);
         attributes.setInt(Tag.BitsStored, VR.US, bitsStored);
-        attributes.setInt(Tag.PixelRepresentation, VR.US, 0);
+        attributes.setInt(Tag.PixelRepresentation, VR.US, signed ? 1 : 0);
         if (samples > 1) {
             attributes.setInt(Tag.PlanarConfiguration, VR.US, 0);
         }

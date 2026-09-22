@@ -1,5 +1,6 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,6 +48,20 @@ class BaselineJpegCodecTest {
         replaceFirstRestartMarker(encoded, 0xd1);
 
         assertThrows(JpegException.class, () -> BaselineJpegCodec.decode(encoded));
+    }
+
+    @Test
+    void decodesReferencedQuantizationAndHuffmanTableIds() throws Exception {
+        int[] samples = new int[64];
+        for (int i = 0; i < samples.length; i++) {
+            samples[i] = (i * 17 + 3) & 0xff;
+        }
+        byte[] encoded = BaselineJpegCodec.encode(JpegFrame.of(8, 8, 1, samples));
+        int[] expected = BaselineJpegCodec.decode(encoded).samples();
+
+        remapSequentialTables(encoded, 2);
+
+        assertArrayEquals(expected, BaselineJpegCodec.decode(encoded).samples());
     }
 
     @Test
@@ -146,6 +161,46 @@ class BaselineJpegCodecTest {
             }
         }
         throw new AssertionError("restart marker not found");
+    }
+
+    private static void remapSequentialTables(byte[] data, int tableId) {
+        for (int offset = 2; offset + 3 < data.length;) {
+            if ((data[offset] & 0xff) != 0xff) {
+                throw new AssertionError("JPEG marker expected");
+            }
+            int marker = data[offset + 1] & 0xff;
+            int length = ((data[offset + 2] & 0xff) << 8) | (data[offset + 3] & 0xff);
+            int end = offset + 2 + length;
+            if (marker == 0xdb) {
+                for (int cursor = offset + 4; cursor < end;) {
+                    int precision = (data[cursor] & 0xff) >>> 4;
+                    data[cursor] = (byte) (precision << 4 | tableId);
+                    cursor += 1 + 64 * (precision + 1);
+                }
+            } else if (marker == 0xc0) {
+                int components = data[offset + 9] & 0xff;
+                for (int component = 0; component < components; component++) {
+                    data[offset + 12 + component * 3] = (byte) tableId;
+                }
+            } else if (marker == 0xc4) {
+                for (int cursor = offset + 4; cursor < end;) {
+                    data[cursor] = (byte) ((data[cursor] & 0xf0) | tableId);
+                    int values = 0;
+                    for (int i = 1; i <= 16; i++) {
+                        values += data[cursor + i] & 0xff;
+                    }
+                    cursor += 17 + values;
+                }
+            } else if (marker == 0xda) {
+                int components = data[offset + 4] & 0xff;
+                for (int component = 0; component < components; component++) {
+                    data[offset + 6 + component * 2] = (byte) (tableId << 4 | tableId);
+                }
+                return;
+            }
+            offset = end;
+        }
+        throw new AssertionError("SOS marker not found");
     }
 
 }

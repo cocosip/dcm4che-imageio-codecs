@@ -96,6 +96,19 @@ class LosslessJpegCodecTest {
         assertThrows(JpegException.class, () -> LosslessJpegCodec.decode(encoded));
     }
 
+    @Test
+    void decodesReferencedLosslessHuffmanTableId() throws Exception {
+        int[] samples = new int[8 * 5];
+        for (int i = 0; i < samples.length; i++) {
+            samples[i] = (i * 37 + 11) & 0xff;
+        }
+        byte[] encoded = LosslessJpegCodec.encode(JpegFrame.of(8, 5, 1, samples, 8), 1);
+
+        remapLosslessHuffmanTable(encoded, 2);
+
+        assertArrayEquals(samples, LosslessJpegCodec.decode(encoded).samples());
+    }
+
     private static boolean hasMarker(byte[] data, int marker) {
         for (int i = 0; i + 1 < data.length; i++) {
             if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xff) == marker) {
@@ -124,5 +137,31 @@ class LosslessJpegCodecTest {
             }
         }
         throw new AssertionError("restart marker not found");
+    }
+
+    private static void remapLosslessHuffmanTable(byte[] data, int tableId) {
+        for (int offset = 2; offset + 3 < data.length;) {
+            int marker = data[offset + 1] & 0xff;
+            int length = ((data[offset + 2] & 0xff) << 8) | (data[offset + 3] & 0xff);
+            int end = offset + 2 + length;
+            if (marker == 0xc4) {
+                for (int cursor = offset + 4; cursor < end;) {
+                    data[cursor] = (byte) tableId;
+                    int values = 0;
+                    for (int i = 1; i <= 16; i++) {
+                        values += data[cursor + i] & 0xff;
+                    }
+                    cursor += 17 + values;
+                }
+            } else if (marker == 0xda) {
+                int components = data[offset + 4] & 0xff;
+                for (int component = 0; component < components; component++) {
+                    data[offset + 6 + component * 2] = (byte) (tableId << 4);
+                }
+                return;
+            }
+            offset = end;
+        }
+        throw new AssertionError("SOS marker not found");
     }
 }

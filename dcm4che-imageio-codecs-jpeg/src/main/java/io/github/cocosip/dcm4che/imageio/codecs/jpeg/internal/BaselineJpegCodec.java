@@ -113,15 +113,22 @@ public final class BaselineJpegCodec {
             writeQuantization(output, 1, chrominanceQuantization);
         }
         writeFrameHeader(output, frame, frameMarker, sampling);
-        writeHuffmanTables(output, frame.components());
+        boolean extendedHuffman = frameMarker == 0xc1 && frame.precision() > 8;
+        writeHuffmanTables(output, frame.components(), extendedHuffman);
         if (restartInterval != 0) {
             JpegMarkerWriter.write(output, 0xdd, new byte[] {
                     (byte) (restartInterval >>> 8), (byte) restartInterval});
         }
         writeScanHeader(output, frame.components());
         BitWriter bits = new BitWriter(output);
-        HuffmanTable[] dc = {JpegTables.standardLuminanceDc(), JpegTables.standardChrominanceDc()};
-        HuffmanTable[] ac = {JpegTables.standardLuminanceAc(), JpegTables.standardChrominanceAc()};
+        HuffmanTable[] dc = extendedHuffman
+                ? new HuffmanTable[] {JpegTables.extendedDc(), JpegTables.extendedDc()}
+                : new HuffmanTable[] {JpegTables.standardLuminanceDc(),
+                    JpegTables.standardChrominanceDc()};
+        HuffmanTable[] ac = extendedHuffman
+                ? new HuffmanTable[] {JpegTables.extendedAc(), JpegTables.extendedAc()}
+                : new HuffmanTable[] {JpegTables.standardLuminanceAc(),
+                    JpegTables.standardChrominanceAc()};
         QuantizationTable[] quant = {
             QuantizationTable.of(luminanceQuantization),
             QuantizationTable.of(chrominanceQuantization)
@@ -195,6 +202,7 @@ public final class BaselineJpegCodec {
         int precision = 0;
         int components = 0;
         int[] componentIds = null;
+        int[] quantizationTables = null;
         JpegSampling sampling = null;
         int restartInterval = 0;
         boolean scanSeen = false;
@@ -228,6 +236,7 @@ public final class BaselineJpegCodec {
                     throw new JpegException("invalid JPEG SOF0 frame header");
                 }
                 componentIds = new int[components];
+                quantizationTables = new int[components];
                 int[] horizontal = new int[components];
                 int[] vertical = new int[components];
                 for (int i = 0; i < components; i++) {
@@ -237,6 +246,10 @@ public final class BaselineJpegCodec {
                     vertical[i] = payload[offset + 1] & 0x0f;
                     if (horizontal[i] == 0 || vertical[i] == 0) {
                         throw new JpegException("JPEG sampling factors must be non-zero");
+                    }
+                    quantizationTables[i] = payload[offset + 2] & 0xff;
+                    if (quantizationTables[i] > 3) {
+                        throw new JpegException("unsupported JPEG quantization table selector");
                     }
                 }
                 if (components == 1) {
@@ -253,8 +266,9 @@ public final class BaselineJpegCodec {
                 }
                 ScanHeader scan = parseScan(payload, componentIds, components);
                 ScanData entropy = readScan(input);
-                JpegFrame frame = decodeScan(width, height, components, precision, quant, huffman,
-                        sampling, scan, restartInterval, entropy);
+                JpegFrame frame = decodeScan(width, height, components, precision,
+                        quantizationTables, quant, huffman, sampling, scan, restartInterval,
+                        entropy);
                 JpegMarker end = markers.next();
                 if (end.code() != 0xd9) {
                     throw new JpegException("JPEG frame does not end with EOI");
@@ -331,13 +345,22 @@ public final class BaselineJpegCodec {
         JpegMarkerWriter.write(output, marker, payload);
     }
 
-    private static void writeHuffmanTables(ImageOutputStream output, int components) throws IOException {
+    private static void writeHuffmanTables(ImageOutputStream output, int components,
+            boolean extended) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        writeHuffmanDefinition(bytes, 0x00, JpegTables.luminanceDcBits(), JpegTables.luminanceDcValues());
-        writeHuffmanDefinition(bytes, 0x10, JpegTables.luminanceAcBits(), JpegTables.luminanceAcValues());
+        int[] dcBits = extended ? JpegTables.extendedDcBits() : JpegTables.luminanceDcBits();
+        int[] dcValues = extended ? JpegTables.extendedDcValues() : JpegTables.luminanceDcValues();
+        int[] acBits = extended ? JpegTables.extendedAcBits() : JpegTables.luminanceAcBits();
+        int[] acValues = extended ? JpegTables.extendedAcValues() : JpegTables.luminanceAcValues();
+        writeHuffmanDefinition(bytes, 0x00, dcBits, dcValues);
+        writeHuffmanDefinition(bytes, 0x10, acBits, acValues);
         if (components == 3) {
-            writeHuffmanDefinition(bytes, 0x01, JpegTables.chrominanceDcBits(), JpegTables.chrominanceDcValues());
-            writeHuffmanDefinition(bytes, 0x11, JpegTables.chrominanceAcBits(), JpegTables.chrominanceAcValues());
+            writeHuffmanDefinition(bytes, 0x01,
+                    extended ? dcBits : JpegTables.chrominanceDcBits(),
+                    extended ? dcValues : JpegTables.chrominanceDcValues());
+            writeHuffmanDefinition(bytes, 0x11,
+                    extended ? acBits : JpegTables.chrominanceAcBits(),
+                    extended ? acValues : JpegTables.chrominanceAcValues());
         }
         JpegMarkerWriter.write(output, 0xc4, bytes.toByteArray());
     }
@@ -413,10 +436,12 @@ public final class BaselineJpegCodec {
     }
 
     private static JpegFrame decodeScan(int width, int height, int components, int precision,
-            Map<Integer, QuantizationTable> quant, Map<Integer, HuffmanTable> huffman,
-            JpegSampling sampling, ScanHeader scan, int restartInterval, ScanData entropy)
+            int[] quantizationTables, Map<Integer, QuantizationTable> quant,
+            Map<Integer, HuffmanTable> huffman, JpegSampling sampling, ScanHeader scan,
+            int restartInterval, ScanData entropy)
             throws IOException {
-        if (width == 0 || height == 0 || !scanSeenTables(quant, huffman, components)) {
+        if (width == 0 || height == 0 || !scanSeenTables(quantizationTables, quant, huffman,
+                scan, components)) {
             throw new JpegException("JPEG scan is missing required tables");
         }
         int[][] planes = new int[components][];
@@ -446,15 +471,17 @@ public final class BaselineJpegCodec {
                 int mcuY = mcu / mcusX;
                 int mcuX = mcu % mcusX;
                 for (int component = 0; component < components; component++) {
-                    int table = component == 0 ? 0 : 1;
+                    QuantizationTable quantization = quant.get(quantizationTables[component]);
+                    HuffmanTable dc = huffman.get(scan.dcTables[component]);
+                    HuffmanTable ac = huffman.get(0x10 | scan.acTables[component]);
                     for (int blockY = 0; blockY < sampling.vertical(component); blockY++) {
                         for (int blockX = 0; blockX < sampling.horizontal(component); blockX++) {
-                            int[] block = decodeBlock(bits, quant.get(table), huffman.get(table),
-                                    huffman.get(table == 0 ? 0x10 : 0x11), previousDc, component);
+                            int[] block = decodeBlock(bits, quantization, dc, ac, previousDc,
+                                    component);
                             double[] dequantized = new double[64];
                             for (int i = 0; i < 64; i++) {
                                 dequantized[i] = block[i]
-                                        * quant.get(table).get(JpegZigZag.positionOf(i));
+                                        * quantization.get(JpegZigZag.positionOf(i));
                             }
                             double[] restored = JpegDct.inverse(dequantized);
                             int componentX = (mcuX * sampling.horizontal(component) + blockX) * 8;
@@ -502,13 +529,20 @@ public final class BaselineJpegCodec {
         return JpegFrame.of(width, height, components, samples, precision);
     }
 
-    private static boolean scanSeenTables(Map<Integer, QuantizationTable> quant,
-            Map<Integer, HuffmanTable> huffman, int components) {
-        if (!quant.containsKey(0) || !huffman.containsKey(0) || !huffman.containsKey(0x10)) {
+    private static boolean scanSeenTables(int[] quantizationTables,
+            Map<Integer, QuantizationTable> quant, Map<Integer, HuffmanTable> huffman,
+            ScanHeader scan, int components) {
+        if (quantizationTables == null || scan == null) {
             return false;
         }
-        return components == 1 || (quant.containsKey(1) && huffman.containsKey(1)
-                && huffman.containsKey(0x11));
+        for (int component = 0; component < components; component++) {
+            if (!quant.containsKey(quantizationTables[component])
+                    || !huffman.containsKey(scan.dcTables[component])
+                    || !huffman.containsKey(0x10 | scan.acTables[component])) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int[] decodeBlock(BitReader bits, QuantizationTable quant,
@@ -545,14 +579,22 @@ public final class BaselineJpegCodec {
         int offset = 0;
         while (offset < payload.length) {
             int specification = payload[offset++] & 0xff;
-            if ((specification >>> 4) != 0 || offset + 64 > payload.length) {
+            int precision = specification >>> 4;
+            int tableId = specification & 0x0f;
+            int bytesPerValue = precision + 1;
+            if (precision > 1 || tableId > 3 || offset + 64 * bytesPerValue > payload.length) {
                 throw new IllegalArgumentException("unsupported JPEG quantization table");
             }
             int[] values = new int[64];
             for (int i = 0; i < 64; i++) {
-                values[i] = payload[offset++] & 0xff;
+                if (precision == 0) {
+                    values[i] = payload[offset++] & 0xff;
+                } else {
+                    values[i] = u16(payload, offset);
+                    offset += 2;
+                }
             }
-            tables.put(specification & 0x0f, QuantizationTable.of(values));
+            tables.put(tableId, QuantizationTable.of(values));
         }
     }
 
@@ -560,7 +602,8 @@ public final class BaselineJpegCodec {
         int offset = 0;
         while (offset < payload.length) {
             int specification = payload[offset++] & 0xff;
-            if (offset + 16 > payload.length) {
+            if ((specification >>> 4) > 1 || (specification & 0x0f) > 3
+                    || offset + 16 > payload.length) {
                 throw new IllegalArgumentException("truncated JPEG Huffman table");
             }
             int[] counts = new int[16];
@@ -584,9 +627,17 @@ public final class BaselineJpegCodec {
         if (payload.length != 4 + components * 2 || (payload[0] & 0xff) != components) {
             throw new IllegalArgumentException("invalid JPEG SOS header");
         }
+        int[] dcTables = new int[components];
+        int[] acTables = new int[components];
         for (int i = 0; i < components; i++) {
             if ((payload[1 + i * 2] & 0xff) != componentIds[i]) {
                 throw new IllegalArgumentException("JPEG SOS component order is unsupported");
+            }
+            int tables = payload[2 + i * 2] & 0xff;
+            dcTables[i] = tables >>> 4;
+            acTables[i] = tables & 0x0f;
+            if (dcTables[i] > 3 || acTables[i] > 3) {
+                throw new IllegalArgumentException("unsupported JPEG Huffman table selector");
             }
         }
         int ss = payload[payload.length - 3] & 0xff;
@@ -595,7 +646,7 @@ public final class BaselineJpegCodec {
         if (ss != 0 || se != 63 || ahAl != 0) {
             throw new IllegalArgumentException("unsupported JPEG scan parameters");
         }
-        return new ScanHeader();
+        return new ScanHeader(dcTables, acTables);
     }
 
     private static int u16(byte[] bytes, int offset) {
@@ -666,5 +717,12 @@ public final class BaselineJpegCodec {
     }
 
     private static final class ScanHeader {
+        private final int[] dcTables;
+        private final int[] acTables;
+
+        private ScanHeader(int[] dcTables, int[] acTables) {
+            this.dcTables = dcTables;
+            this.acTables = acTables;
+        }
     }
 }

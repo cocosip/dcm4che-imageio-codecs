@@ -1,5 +1,6 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpeg.internal;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -95,6 +96,51 @@ class ExtendedJpegCodecTest {
                 () -> "max difference=" + maxDifference(samples, decoded.samples()));
     }
 
+    @Test
+    void encodesTwelveBitExtremeBlocksAtMaximumQuality() throws Exception {
+        int[] samples = new int[16 * 8];
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                samples[y * 16 + x] = 4095;
+            }
+        }
+
+        byte[] encoded = ExtendedJpegCodec.encode(JpegFrame.of(16, 8, 1, samples, 12),
+                JpegSampling.SF444, 1.0f);
+        JpegFrame decoded = ExtendedJpegCodec.decode(encoded);
+
+        assertTrue(maxDifference(samples, decoded.samples()) <= 1,
+                () -> "max difference=" + maxDifference(samples, decoded.samples()));
+    }
+
+    @Test
+    void decodesTwelveBitFrameWithSixteenBitQuantizationTable() throws Exception {
+        int[] samples = new int[64];
+        for (int i = 0; i < samples.length; i++) {
+            samples[i] = (i * 257 + 31) & 0xfff;
+        }
+        byte[] encoded = ExtendedJpegCodec.encode(JpegFrame.of(8, 8, 1, samples, 12));
+        int[] expected = ExtendedJpegCodec.decode(encoded).samples();
+
+        byte[] withSixteenBitDqt = expandFirstQuantizationTable(encoded);
+
+        assertArrayEquals(expected, ExtendedJpegCodec.decode(withSixteenBitDqt).samples());
+    }
+
+    @Test
+    void decodesTwelveBitFrameWithLargeSixteenBitQuantizationValue() throws Exception {
+        int[] samples = new int[64];
+        byte[] encoded = ExtendedJpegCodec.encode(JpegFrame.of(8, 8, 1, samples, 12));
+        byte[] withSixteenBitDqt = expandFirstQuantizationTable(encoded);
+        setFirstQuantizationValue(withSixteenBitDqt, 256);
+
+        JpegFrame decoded = ExtendedJpegCodec.decode(withSixteenBitDqt);
+
+        assertEquals(8, decoded.width());
+        assertEquals(8, decoded.height());
+        assertEquals(12, decoded.precision());
+    }
+
     private static int maxDifference(int[] expected, int[] actual) {
         int max = 0;
         for (int i = 0; i < expected.length; i++) {
@@ -122,5 +168,44 @@ class ExtendedJpegCodecTest {
             }
         }
         throw new AssertionError("SOF1 marker not found");
+    }
+
+    private static byte[] expandFirstQuantizationTable(byte[] data) {
+        for (int offset = 2; offset + 3 < data.length;) {
+            int marker = data[offset + 1] & 0xff;
+            int oldLength = ((data[offset + 2] & 0xff) << 8) | (data[offset + 3] & 0xff);
+            if (marker == 0xdb) {
+                int oldEnd = offset + 2 + oldLength;
+                int newLength = oldLength + 64;
+                byte[] result = new byte[data.length + 64];
+                System.arraycopy(data, 0, result, 0, offset + 2);
+                result[offset + 2] = (byte) (newLength >>> 8);
+                result[offset + 3] = (byte) newLength;
+                result[offset + 4] = (byte) (0x10 | (data[offset + 4] & 0x0f));
+                for (int i = 0; i < 64; i++) {
+                    result[offset + 5 + i * 2] = 0;
+                    result[offset + 6 + i * 2] = data[offset + 5 + i];
+                }
+                System.arraycopy(data, oldEnd, result, offset + 2 + newLength,
+                        data.length - oldEnd);
+                return result;
+            }
+            offset += 2 + oldLength;
+        }
+        throw new AssertionError("DQT marker not found");
+    }
+
+    private static void setFirstQuantizationValue(byte[] data, int value) {
+        for (int offset = 2; offset + 4 < data.length;) {
+            int marker = data[offset + 1] & 0xff;
+            int length = ((data[offset + 2] & 0xff) << 8) | (data[offset + 3] & 0xff);
+            if (marker == 0xdb) {
+                data[offset + 5] = (byte) (value >>> 8);
+                data[offset + 6] = (byte) value;
+                return;
+            }
+            offset += 2 + length;
+        }
+        throw new AssertionError("DQT marker not found");
     }
 }

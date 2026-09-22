@@ -122,7 +122,7 @@ public final class LosslessJpegCodec {
                 int y = mcu / parsed.width;
                 int x = mcu % parsed.width;
                 for (int component = 0; component < parsed.components; component++) {
-                    int category = HuffmanCodec.decodeSymbol(bits, parsed.huffman);
+                    int category = HuffmanCodec.decodeSymbol(bits, parsed.huffman[component]);
                     if (category > transformedPrecision + 1
                             || category == 16 && transformedPrecision < 16) {
                         throw new JpegException("invalid JPEG Lossless difference category");
@@ -278,10 +278,18 @@ public final class LosslessJpegCodec {
                 }
                 restartInterval = u16(payload, 0);
             } else if (code == 0xda) {
-                if (componentIds == null || !huffman.containsKey(0)) {
+                if (componentIds == null) {
                     throw new JpegException("JPEG Lossless scan is missing SOF3 or DHT");
                 }
                 ScanParameters scanParameters = parseScan(payload, componentIds, components);
+                HuffmanTable[] componentHuffman = new HuffmanTable[components];
+                for (int component = 0; component < components; component++) {
+                    componentHuffman[component] = huffman.get(scanParameters.dcTables[component]);
+                    if (componentHuffman[component] == null) {
+                        throw new JpegException(
+                                "JPEG Lossless scan references missing Huffman table");
+                    }
+                }
                 if (scanParameters.pointTransform >= precision) {
                     throw new JpegException("JPEG Lossless point transform exceeds precision");
                 }
@@ -291,7 +299,8 @@ public final class LosslessJpegCodec {
                     throw new JpegException("JPEG Lossless frame does not end with EOI");
                 }
                 return new ParsedFrame(width, height, precision, components,
-                        scanParameters.predictor, scanParameters.pointTransform, huffman.get(0),
+                        scanParameters.predictor, scanParameters.pointTransform,
+                        componentHuffman,
                         restartInterval, scan.entropySegments,
                         scan.restartMarkers);
             } else if ((code >= 0xe0 && code <= 0xef) || code == 0xfe) {
@@ -369,11 +378,14 @@ public final class LosslessJpegCodec {
         if (payload.length != 4 + components * 2 || (payload[0] & 0xff) != components) {
             throw new IllegalArgumentException("invalid JPEG Lossless SOS header");
         }
+        int[] dcTables = new int[components];
         for (int i = 0; i < components; i++) {
+            int tables = payload[2 + i * 2] & 0xff;
             if ((payload[1 + i * 2] & 0xff) != componentIds[i]
-                    || payload[2 + i * 2] != 0) {
+                    || (tables & 0x0f) != 0 || (tables >>> 4) > 3) {
                 throw new IllegalArgumentException("unsupported JPEG Lossless scan components");
             }
+            dcTables[i] = tables >>> 4;
         }
         int predictor = payload[payload.length - 3] & 0xff;
         int pointTransform = payload[payload.length - 2] & 0xff;
@@ -381,7 +393,7 @@ public final class LosslessJpegCodec {
                 || pointTransform >= 16) {
             throw new IllegalArgumentException("unsupported JPEG Lossless scan parameters");
         }
-        return new ScanParameters(predictor, pointTransform);
+        return new ScanParameters(predictor, pointTransform, dcTables);
     }
 
     private static int predict(int[] samples, int width, int components, int x, int y,
@@ -464,10 +476,12 @@ public final class LosslessJpegCodec {
     private static final class ScanParameters {
         private final int predictor;
         private final int pointTransform;
+        private final int[] dcTables;
 
-        private ScanParameters(int predictor, int pointTransform) {
+        private ScanParameters(int predictor, int pointTransform, int[] dcTables) {
             this.predictor = predictor;
             this.pointTransform = pointTransform;
+            this.dcTables = dcTables;
         }
     }
 
@@ -478,13 +492,13 @@ public final class LosslessJpegCodec {
         private final int components;
         private final int predictor;
         private final int pointTransform;
-        private final HuffmanTable huffman;
+        private final HuffmanTable[] huffman;
         private final int restartInterval;
         private final List<byte[]> entropySegments;
         private final List<Integer> restartMarkers;
 
         private ParsedFrame(int width, int height, int precision, int components, int predictor,
-                int pointTransform, HuffmanTable huffman, int restartInterval,
+                int pointTransform, HuffmanTable[] huffman, int restartInterval,
                 List<byte[]> entropySegments,
                 List<Integer> restartMarkers) {
             this.width = width;

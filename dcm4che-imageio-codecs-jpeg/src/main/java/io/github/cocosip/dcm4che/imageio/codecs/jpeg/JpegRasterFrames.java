@@ -48,7 +48,7 @@ final class JpegRasterFrames {
         int index = 0;
         for (int y = raster.getMinY(); y < raster.getMinY() + raster.getHeight(); y++) {
             for (int x = raster.getMinX(); x < raster.getMinX() + raster.getWidth(); x++) {
-                if (shouldConvertRgb(descriptor, flavor)) {
+                if (shouldConvertRgbInput(descriptor, image, flavor)) {
                     int[] ybr = rgbToYbr(raster.getSample(x, y, 0), raster.getSample(x, y, 1),
                             raster.getSample(x, y, 2), descriptor.getBitsStored());
                     for (int component = 0; component < 3; component++) {
@@ -83,6 +83,7 @@ final class JpegRasterFrames {
     static BufferedImage toImage(ImageDescriptor descriptor, JpegFrame frame, ImageReadParam param,
             Flavor flavor) throws IIOException {
         validateDescriptor(descriptor, flavor);
+        validateFrame(descriptor, frame);
         int expectedPrecision = flavor == Flavor.BASELINE ? 8 : descriptor.getBitsStored();
         if (frame.precision() != expectedPrecision) {
             throw new IIOException("JPEG precision does not match DICOM BitsStored");
@@ -119,21 +120,23 @@ final class JpegRasterFrames {
     private static void validateDescriptor(ImageDescriptor descriptor, Flavor flavor)
             throws IIOException {
         int bitsStored = descriptor.getBitsStored();
-        boolean baseline = flavor == Flavor.BASELINE;
-        boolean validPrecision = baseline
-                ? bitsStored <= 8
-                : bitsStored >= 8 && bitsStored <= (flavor == Flavor.LOSSLESS ? 16 : 12);
-        boolean validAllocation = !baseline
-                ? descriptor.getBitsAllocated() == (bitsStored <= 8 ? 8 : 16)
-                : descriptor.getBitsAllocated() == 8;
+        boolean validPrecision = flavor == Flavor.BASELINE
+                ? bitsStored == 8
+                : flavor == Flavor.EXTENDED
+                ? bitsStored == 8 || bitsStored == 12
+                : bitsStored == 8 || bitsStored == 12 || bitsStored == 16;
+        boolean validAllocation = descriptor.getBitsAllocated() == (bitsStored <= 8 ? 8 : 16);
+        boolean unsupportedExtendedSubsampling = flavor == Flavor.EXTENDED && bitsStored == 12
+                && "YBR_FULL_422".equals(
+                        String.valueOf(descriptor.getPhotometricInterpretation()));
         if (!validAllocation || !validPrecision
                 || (descriptor.getSamples() != 1 && descriptor.getSamples() != 3)
-                || (!baseline && descriptor.isSigned())) {
-            throw new IIOException(!baseline
-                    ? flavor == Flavor.LOSSLESS
-                    ? "JPEG Lossless requires unsigned 8-16 bit monochrome or RGB pixels"
-                    : "JPEG Extended requires unsigned 8-12 bit monochrome or RGB pixels"
-                    : "JPEG Baseline requires 8-bit monochrome or RGB pixels");
+                || descriptor.isSigned() || unsupportedExtendedSubsampling) {
+            throw new IIOException(flavor == Flavor.BASELINE
+                    ? "JPEG Baseline requires unsigned 8-bit monochrome or color pixels"
+                    : flavor == Flavor.EXTENDED
+                    ? "JPEG Extended requires unsigned 8-bit or 12-bit monochrome or color pixels"
+                    : "JPEG Lossless requires unsigned 8-bit, 12-bit, or 16-bit monochrome or color pixels");
         }
     }
 
@@ -150,14 +153,23 @@ final class JpegRasterFrames {
         }
     }
 
+    private static void validateFrame(ImageDescriptor descriptor, JpegFrame frame)
+            throws IIOException {
+        if (frame.width() != descriptor.getColumns() || frame.height() != descriptor.getRows()) {
+            throw new IIOException("JPEG frame dimensions do not match descriptor");
+        }
+        if (frame.components() != descriptor.getSamples()) {
+            throw new IIOException("JPEG frame component count does not match descriptor");
+        }
+    }
+
     private static ReadRegion readRegion(ImageDescriptor descriptor, ImageReadParam param)
             throws IIOException {
         Rectangle source = new Rectangle(0, 0, descriptor.getColumns(), descriptor.getRows());
         int sourceXSubsampling = param == null ? 1 : param.getSourceXSubsampling();
         int sourceYSubsampling = param == null ? 1 : param.getSourceYSubsampling();
-        // ImageReadParam exposes the subsampling factors but not the offsets on Java 8.
-        int sourceXOffset = 0;
-        int sourceYOffset = 0;
+        int sourceXOffset = param == null ? 0 : param.getSubsamplingXOffset();
+        int sourceYOffset = param == null ? 0 : param.getSubsamplingYOffset();
         if (param != null && param.getSourceRegion() != null) {
             source = source.intersection(param.getSourceRegion());
         }
@@ -199,9 +211,8 @@ final class JpegRasterFrames {
             throws IIOException {
         int[] requestedSource = param == null ? null : param.getSourceBands();
         int[] requestedDestination = param == null ? null : param.getDestinationBands();
-        int count = requestedSource != null ? requestedSource.length
-                : requestedDestination != null ? requestedDestination.length : descriptor.getSamples();
-        int[] result = requestedSource == null ? sequence(count) : requestedSource.clone();
+        int[] result = requestedSource == null
+                ? sequence(descriptor.getSamples()) : requestedSource.clone();
         for (int band : result) {
             if (band < 0 || band >= descriptor.getSamples()) {
                 throw new IIOException("JPEG source band is outside the source image");
@@ -255,7 +266,7 @@ final class JpegRasterFrames {
     private static int[] decodedPixel(ImageDescriptor descriptor, Flavor flavor, int[] samples,
             int index) {
         int[] values = new int[descriptor.getSamples()];
-        if (shouldConvertRgb(descriptor, flavor)) {
+        if (shouldConvertYbrOutput(descriptor, flavor)) {
             int[] rgb = ybrToRgb(samples[index], samples[index + 1], samples[index + 2],
                     descriptor.getBitsStored());
             System.arraycopy(rgb, 0, values, 0, values.length);
@@ -298,12 +309,15 @@ final class JpegRasterFrames {
         return "MONOCHROME1".equals(String.valueOf(descriptor.getPhotometricInterpretation()));
     }
 
-    private static boolean isRgb(ImageDescriptor descriptor) {
-        return "RGB".equals(String.valueOf(descriptor.getPhotometricInterpretation()));
+    private static boolean shouldConvertRgbInput(ImageDescriptor descriptor, RenderedImage image,
+            Flavor flavor) {
+        return flavor != Flavor.LOSSLESS && descriptor.getSamples() == 3
+                && image.getColorModel() != null
+                && image.getColorModel().getColorSpace().isCS_sRGB();
     }
 
-    private static boolean shouldConvertRgb(ImageDescriptor descriptor, Flavor flavor) {
-        return flavor != Flavor.LOSSLESS && descriptor.getSamples() == 3 && isRgb(descriptor);
+    private static boolean shouldConvertYbrOutput(ImageDescriptor descriptor, Flavor flavor) {
+        return flavor != Flavor.LOSSLESS && descriptor.getSamples() == 3;
     }
 
     static JpegSampling sampling(ImageDescriptor descriptor) {

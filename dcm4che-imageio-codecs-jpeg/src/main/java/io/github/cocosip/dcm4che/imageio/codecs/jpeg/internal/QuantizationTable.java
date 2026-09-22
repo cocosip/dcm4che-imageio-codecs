@@ -15,7 +15,7 @@ final class QuantizationTable {
         }
         int[] copy = Arrays.copyOf(values, values.length);
         for (int value : copy) {
-            if (value < 1 || value > 255) {
+            if (value < 1 || value > 0xffff) {
                 throw new IllegalArgumentException("JPEG quantization value out of range: " + value);
             }
         }

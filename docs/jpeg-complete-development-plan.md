@@ -68,7 +68,10 @@ JpegImageReader / JpegImageWriter
 
 - JPEG marker、长度、SOI/EOI 和截断输入校验。
 - MSB-first bit reader/writer、byte stuffing 和 marker 边界处理。
-- Canonical Huffman table、DQT/DHT/SOS 解析与生成。
+- Canonical Huffman table、DQT/DHT/SOS 解析与生成；SOF/SOS 的 quantization、DC、AC
+  table selector 0-3 按 component 生效，引用缺失 table 时明确失败。
+- 解码支持 8-bit/16-bit DQT；12-bit Extended 编码使用覆盖更大 DC/AC category 的
+  独立 Huffman 定义，不改变 Baseline 标准表。
 - 8x8 DCT、量化、zig-zag、DC differential 和 AC run-length coding。
 - Predictive lossless coding；predictor 1-7 解码、predictor 1 编码。
 - DRI/RST restart interval 的编码、解码和 marker 顺序校验。
@@ -78,17 +81,23 @@ JpegImageReader / JpegImageWriter
 | 语法 | 当前状态 | 说明 |
 | --- | --- | --- |
 | `.50` Baseline | 已完成 | SOF0，8-bit，Sequential DCT，Huffman，Monochrome/RGB。 |
-| `.51` Extended | 已完成 | SOF1，unsigned 8/12-bit，SF444，Descriptor-backed 16-bit 容器。 |
+| `.51` Extended | 已完成 | SOF1，仅 unsigned 8/12-bit；12-bit 限定 SF444，使用 Descriptor-backed 16-bit 容器。 |
 | `.57` Lossless | 已完成 | SOF3，unsigned 8/12/16-bit，predictor 1-7 解码，predictor 1 编码。 |
 | `.70` Lossless SV1 | 已完成 | 固定 predictor 1，独立 reader/writer 适配器和参数约束。 |
 
 ### 3.3 ImageIO 与 DICOM 适配
 
 - 四个语法各自的 reader/writer 和 ImageIO SPI。
-- Descriptor-backed 输入输出，Monochrome/RGB 样本转换。
+- Descriptor-backed 输入输出；有损编码把 sRGB 输入转换为 YBR，解码把三通道 YBR
+  转回 sRGB `BufferedImage`，Lossless 保持样本值不变。
+- 解码帧在写 raster 前校验 width、height、component count 和 precision 与 descriptor
+  完全一致。
 - Baseline/Extended 的 compression quality 与 quantization 控制。
 - Lossless/SV1 的 point transform、predictor 和 restart 参数校验。
-- ImageReadParam 的 source region、subsampling、destination offset 和 band selection。
+- ImageReadParam 的 source region、subsampling factor/offset、destination offset 和成对
+  source/destination band selection；未指定 source bands 时保留全部源 band。
+- Descriptor 精度固定为 Baseline unsigned 8-bit、Extended unsigned 8/12-bit、Lossless
+  unsigned 8/12/16-bit；Extended 12-bit `YBR_FULL_422` 在公开适配层拒绝。
 - DICOM properties 只注册 `.50/.51/.57/.70`，不覆盖其他 dcm4che 默认 UID 映射。
 
 ## 4. 注册边界
@@ -119,9 +128,9 @@ Transfer Syntax、Photometric Interpretation、四组件 Pixel Data 或公开 SP
 
 1. `.51`：增加外部编码器输入和外部解码器输出，覆盖 8-bit 与 12-bit。
 2. `.57/.70`：增加外部 Lossless fixture，覆盖 predictor、point transform 和 restart interval。
-3. 补充 malformed marker、缺失 table、错误 RST 顺序和截断 entropy 数据的回归样例。
-4. 对 Monochrome1、Monochrome2、RGB、位深和 signed/unsigned descriptor 组合做矩阵化验证。
-5. 记录每个 fixture 的编码器、解码器、像素比较方式和允许误差。
+3. 继续补充 malformed marker、错误 RST 顺序和截断 entropy 数据的外部回归样例。
+4. 使用外部 fixture 对 Monochrome1、Monochrome2、RGB/YBR 和已声明位深组合做矩阵化验证。
+5. 记录每个 fixture 的编码器、解码器、像素比较方式和允许误差；内部闭环不得替代该证据。
 
 Progressive、Arithmetic、Differential/Hierarchical 和 CMYK/YCCK 不属于上述待办事项。
 

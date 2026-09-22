@@ -4,9 +4,10 @@
 > for this project. No implementation code has been written yet. This document is the
 > baseline for all subsequent development discussions.
 >
-> The primary algorithm and design reference is **fo-dicom.PureCodecs**, a pure C#
-> implementation of the same codec set targeting fo-dicom. Study its per-codec design
-> documents before implementing any codec family (see References §11).
+> **fo-dicom.PureCodecs** is an important readable algorithm reference, but it does not
+> define this project's normative scope. Standards, DICOM constraints, dcm4che APIs, and
+> the actual fo-dicom.Codecs adapter call chain take precedence; study the per-codec design
+> documents and verify which reference parameters are actually connected (see References §11).
 
 ---
 
@@ -31,13 +32,12 @@ It defines fo-dicom's codec contract (`IDicomCodec` / `ITranscoderManager`) and 
 codecs via fo-dicom's dependency injection mechanism. The set of supported transfer
 syntaxes in fo-dicom.Codecs defines the Phase 1 scope for this project.
 
-#### fo-dicom.PureCodecs (algorithm reference)
+#### fo-dicom.PureCodecs (algorithm reference, not a scope oracle)
 
 **[fo-dicom.PureCodecs](https://github.com/cocosip/fo-dicom.PureCodecs)** is a pure C#
 replacement for fo-dicom.Codecs — same transfer
 syntax coverage, same fo-dicom interface, but implemented entirely in managed code with no
-native dependency. It serves as the primary algorithm and design reference for this project
-because:
+native dependency. It is useful for readable algorithm and adapter evidence because:
 
 - All algorithms (RLE PackBits, JPEG DCT/predictive, JPEG-LS Golomb, JPEG 2000 DWT/EBCOT,
   HTJ2K HT block coding) are implemented in a readable, high-level language with detailed
@@ -78,7 +78,7 @@ because:
 Scope is aligned with fo-dicom.PureCodecs Phase 1 — the same set of transfer syntaxes
 that `fo-dicom.Codecs` supports (excluding features its README marks as "in development").
 
-### Included in Phase 1
+### Included in the current project scope
 
 | Codec family | Transfer syntax | UID | Encode | Decode |
 |---|---|---|---|---|
@@ -95,7 +95,7 @@ that `fo-dicom.Codecs` supports (excluding features its README marks as "in deve
 | JPEG 2000 / HTJ2K | HTJ2K Lossless RPCL | `1.2.840.10008.1.2.4.202` | Required | Required |
 | JPEG 2000 / HTJ2K | HTJ2K Lossy | `1.2.840.10008.1.2.4.203` | Required | Required |
 
-### Excluded from Phase 1
+### Outside the current project scope
 
 | Transfer syntax | UID | Reason |
 |---|---|---|
@@ -346,21 +346,33 @@ JPEG work list.
 
 Transfer syntaxes:
 - JPEG-LS Lossless (`.80`): `AllowedError = 0`.
-- JPEG-LS Near-Lossless (`.81`): `AllowedError = N` (N > 0), per-sample tolerance check.
+- JPEG-LS Near-Lossless (`.81`): `0 <= AllowedError <= min(255, MAXVAL / 2)`;
+  `.81` may legally carry `NEAR=0`. The dcm4che-compatible default is `2`.
 
 Key design points:
-- Marker support: SOI, EOI, SOF55, SOS, LSE (preset coding parameters), DRI/RST (2-, 3-,
-  and 4-byte forms), APPn/COM (skip). APP8 `mrfx` HP1/HP2/HP3 color-transform metadata
-  must be parsed for decoder-side inverse transform compatibility.
+- Marker support: SOI, EOI, SOF55, SOS, LSE Part 1 types `0x01`-`0x04`, DNL,
+  DRI/RST (2-, 3-, and 4-byte forms), and APPn/COM metadata skipping.
+- Mapping table specification/continuation is standard Part 1 functionality and is required
+  even though the local PureCodecs and bundled CharLS snapshots do not fully implement it.
 - **Encoding modes**: regular mode (Golomb coding + context model) and run mode.
-- **Interleave modes**: None (monochrome), Line, Sample — must map to DICOM PlanarConfiguration.
-- Planar `YBR_FULL_422` is explicitly rejected. Interleaved `YBR_FULL_422` normalized to RGB
-  before encode.
+- **Interleave modes**: None, Line, Sample, including legal non-interleaved multi-scan color.
+- Signed monochrome preserves the low `BitsStored` two's-complement bit pattern while the
+  coding core operates on unsigned sample codes.
+- Current DICOM JPEG-LS Photometric rules and historical fo-dicom YBR compatibility paths
+  are treated separately; reference-library adapter behavior is not automatically a standard rule.
+- fo-dicom.Codecs 实际通过 CharLS legacy `JpegLSEncode`/`JpegLSDecode` 使用 frame 参数、NEAR、
+  stride、组件数和 ILV；编码把 color transform 固定为 None，未接入 mapping table、SPIFF/APP/COM
+  writer、ROI decode 等通用 CharLS API。PureCodecs 的同名 `ColorTransform`/`InterleaveMode` 参数也
+  不能视为已接线能力；详细使用矩阵见 [`docs/jpegls-development-plan.md`](jpegls-development-plan.md)。
+- Effective preset parameters, NEAR, mapping selectors, and restart interval are captured per scan.
 - Near-lossless round-trip: verify `abs(original − decoded) ≤ AllowedError` per sample.
-- **Parameters**: `AllowedError`, `InterleaveMode`, `ColorTransform`.
+- **Writer parameters**: `AllowedError`, `InterleaveMode`, `RestartInterval`, and optional
+  standard mapping tables/selectors. APP8 `mrfx` HP1/HP2/HP3 is decoder compatibility behavior;
+  the DICOM writer emits no HP transform.
 
 **dcm4che status**: `.80/.81` mapped to `NativeImageReader` via opencv. This project
-replaces that mapping.
+replaces that mapping. The implementation and verification plan is recorded in
+[`docs/jpegls-development-plan.md`](jpegls-development-plan.md).
 
 ### 6.4 JPEG 2000 / HTJ2K Family
 
@@ -715,6 +727,8 @@ dcm4che-imageio-codecs/
   Process 1 `.50`, Extended Process 2/4 `.51`, Lossless Process 14 `.57`, and
   Lossless Process 14 SV1 `.70` are registered.
 - JPEG-LS and JPEG 2000/HTJ2K modules remain scaffolds without codec code.
+- The JPEG-LS implementation plan is recorded in `docs/jpegls-development-plan.md`;
+  implementation has not started.
 - Two minor open questions remain (see Section 9).
 
 ---

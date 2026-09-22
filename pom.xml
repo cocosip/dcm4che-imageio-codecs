@@ -135,6 +135,15 @@
         </pluginManagement>
 
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                    <showWarnings>false</showWarnings>
+                </configuration>
+            </plugin>
             <!-- flatten-maven-plugin: resolves ${revision} in installed/published POMs.
                  Without this, published POM files would contain literal "${revision}" instead
                  of the actual version, which breaks consumers. -->

@@ -1,2 +1,2 @@
-# uncomment when implemented
-#io.github.cocosip.dcm4che.imageio.codecs.jpegls.JpegLsImageWriterSpi
+io.github.cocosip.dcm4che.imageio.codecs.jpegls.JpegLsLosslessImageWriterSpi
+io.github.cocosip.dcm4che.imageio.codecs.jpegls.JpegLsNearLosslessImageWriterSpi

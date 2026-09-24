@@ -35,12 +35,12 @@ Snapshot date: 2026-09-24
 | Item | State | Evidence |
 | --- | --- | --- |
 | Classic JPEG 2000 design | `COMPLETE` | `docs/jpeg2000-development-plan.md`, commit `2fd09f2` |
-| Java implementation | `IN_PROGRESS` | P1-P2 complete with 58 focused module tests. |
+| Java implementation | `IN_PROGRESS` | P1-P3 complete; P4 packet infrastructure is next. |
 | SPI registration | `NOT_STARTED` | Reader and writer service entries remain commented out. |
 | External interoperability | `NOT_STARTED` | No committed `.90/.91` fixtures or external pixel checks exist. |
-| Active phase | `P3` | MQ coder and EBCOT code-block coding |
+| Active phase | `P4` | Tag trees, packets, progression orders, tiles, and tile-parts |
 
-Implementation progress is **2 of 9 phases complete**. Design completion is
+Implementation progress is **3 of 9 phases complete**. Design completion is
 tracked separately and is not counted as codec implementation.
 
 ## 4. Delivery Sequence
@@ -49,7 +49,7 @@ tracked separately and is not counted as codec implementation.
 | --- | --- | --- | --- |
 | P1 | Bounded codestream and marker foundation | Design baseline | `COMPLETE` |
 | P2 | Geometry, raster normalization, RCT, and reversible 5/3 DWT | P1 | `COMPLETE` |
-| P3 | MQ coder and EBCOT code-block coding | P1-P2 | `NOT_STARTED` |
+| P3 | MQ coder and EBCOT code-block coding | P1-P2 | `COMPLETE` |
 | P4 | Tag trees, packets, progression orders, tiles, and tile-parts | P1-P3 | `NOT_STARTED` |
 | P5 | `.90` lossless codec vertical slice | P1-P4 | `NOT_STARTED` |
 | P6 | 9/7 DWT, quantization, PCRD rate allocation, and `.91` | P1-P5 | `NOT_STARTED` |
@@ -151,12 +151,20 @@ all checked geometry limits pass before allocation.
 
 ### P3: MQ coder and EBCOT code-block coding
 
-- Implement MQ context transitions, byte stuffing, bounded refill/flush, and
-  termination modes from independent conformance vectors.
-- Implement significance propagation, magnitude refinement, cleanup, pass
-  boundaries, truncation points, and the COD/COC `RESET` and `VSC` styles.
-- Keep encoder and decoder tests independent where a fixed standard or foreign
-  vector is available; self-round-trip remains supplemental evidence.
+- [x] Add the standard 47-state MQ probability table, context state
+  transitions, interval renormalization, bounded byte refill, and flush.
+- [x] Add independent state-table, long-sequence round-trip, reset, context,
+  and invalid-input tests for the MQ foundation.
+- [x] Complete MQ byte-stuffing and baseline MQ termination with an independent
+  fo-dicom conformance vector. `BYPASS`, `TERMALL`, and `PTERM` are rejected
+  explicitly until their separate raw/terminated segment paths are implemented.
+- [x] Implement significance propagation, magnitude refinement, cleanup,
+  pass boundaries, truncation points, and the COD/COC `RESET` and `VSC`
+  styles.
+- [x] Add code-block result metadata and deterministic round-trip tests for
+  all three pass types, truncation, zero blocks, and `SEGMARK`.
+- [x] Keep encoder and decoder tests independent where a fixed standard or
+  foreign vector is available; self-round-trip remains supplemental evidence.
 
 **Exit gate:** fixed MQ and code-block vectors pass in both directions,
 truncation at every accepted pass boundary is bounded, and malformed entropy
@@ -279,6 +287,13 @@ declared complete and HTJ2K planning move into implementation.
 | 2026-09-24 | P1 | `ca02e85` | `./mvnw.cmd test` | Full reactor passed: 275 tests, 0 failures, 0 errors, 0 skipped. |
 | 2026-09-24 | P2 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000GeometryTest,Jpeg2000Dwt53Test,Jpeg2000ComponentTransformTest,Jpeg2000RasterNormalizerTest" test` | 34 P2 tests passed, including the 8/12/16-bit signed/unsigned reversible raster matrix. |
 | 2026-09-24 | P2 | Working tree | `./mvnw.cmd test` | Full reactor passed: 309 tests, 0 failures, 0 errors, 0 skipped; JPEG 2000 module passed 58 tests. |
+| 2026-09-24 | P3 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000MqCoderTest" test` | 5 MQ foundation tests passed; state table, refill/flush round-trip, reset, byte-range, and invalid context checks are green. |
+| 2026-09-24 | P3 | Working tree | `./mvnw.cmd test` | Full reactor passed: 314 tests, 0 failures, 0 errors, 0 skipped; JPEG 2000 module passed 63 tests. |
+| 2026-09-24 | P3 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000EbcotTest" test` | 5 EBCOT tests passed; all three pass types, truncation, zero blocks, RESET/VSC/SEGMARK, and Integer.MIN_VALUE rejection are covered. |
+| 2026-09-24 | P3 | fo-dicom PureCodecs independent vectors | MQ `B98D284C028E`; EBCOT `0EC977D2CB764A` and `04CB5B8B` | Java encoding matches all three foreign vectors and Java decoding reconstructs their symbol/coefficient sequences. |
+| 2026-09-24 | P3 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000MqCoderTest,Jpeg2000EbcotTest" test` | 19 P3 tests passed; every recorded pass prefix is bounded, all orientations and accepted styles round-trip, and malformed stuffing, metadata, payload boundaries, and segmentation symbols are rejected. |
+| 2026-09-24 | P3 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am test` | JPEG 2000 module passed 77 tests, 0 failures, 0 errors, 0 skipped. |
+| 2026-09-24 | P3 | Working tree | `./mvnw.cmd test` | Full reactor passed: 328 tests, 0 failures, 0 errors, 0 skipped. P3 exit gate satisfied. |
 
 For focused Java tests, use this PowerShell command shape and replace the test
 class name with the current phase suite:
@@ -300,8 +315,6 @@ dependencies, runtime fallbacks, or substitutes for the pure-Java implementation
 
 ## 9. Next Work Item
 
-Start P3 with independent MQ state-transition and byte-stuffing vectors before
-adding mutable coder state. Cover bounded refill/flush and every accepted
-termination mode, then implement significance-propagation, magnitude-refinement,
-and cleanup passes with fixed code-block vectors. P3 must not add packet state,
-ImageIO adapters, SPI activation, or HTJ2K code.
+Start P4 with classic tag trees and packet-header state scoped to the owning
+tile-component-resolution-precinct. Keep packet state out of `jpeg2000.common`,
+and do not add ImageIO adapters, SPI activation, or HTJ2K code in this phase.

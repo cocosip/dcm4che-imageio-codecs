@@ -1,8 +1,8 @@
 # dcm4che-imageio-codecs Design Document
 
-> This document records the background research, architecture decisions, and open questions
-> for this project. No implementation code has been written yet. This document is the
-> baseline for all subsequent development discussions.
+> This document records the background research, architecture decisions, current
+> implementation state, and open questions for this project. Per-codec design documents
+> and the checked-in code are the authority for implemented behavior.
 >
 > **fo-dicom.PureCodecs** is an important readable algorithm reference, but it does not
 > define this project's normative scope. Standards, DICOM constraints, dcm4che APIs, and
@@ -26,7 +26,8 @@ production codec package for fo-dicom. It wraps native C/C++ libraries via P/Inv
 
 - **JPEG** — libjpeg-turbo (baseline / extended / lossless)
 - **JPEG-LS** — CharLS
-- **JPEG 2000 / HTJ2K** — OpenJPEG
+- **JPEG 2000** — OpenJPEG
+- **HTJ2K** — OpenJPH
 
 It defines fo-dicom's codec contract (`IDicomCodec` / `ITranscoderManager`) and registers
 codecs via fo-dicom's dependency injection mechanism. The set of supported transfer
@@ -53,10 +54,10 @@ native dependency. It is useful for readable algorithm and adapter evidence beca
 | Interface model | fo-dicom's own `IDicomCodec` / `ITranscoderManager` | Java standard `javax.imageio` SPI |
 | Registration | DI container, `AddTranscoderManager<PureTranscoderManager>()` | `ImageReaderFactory.getDefault().load(...)` + IIORegistry SPI |
 | DICOM parameter passing | Directly via `IDicomCodec.Encode(DicomDataset, ...)` | Side-channel via `SegmentedInputImageStream.getImageDescriptor()` |
-| Implementation language | Pure C# (no native dependency) | Pure Java (no JNI, no native dependency) |
+| Implementation language | Native C/C++ wrappers in fo-dicom.Codecs; pure C# in fo-dicom.PureCodecs | Pure Java (no JNI, no native dependency) |
 | Maven groupId | — | `io.github.cocosip` |
 | Java package root | — | `io.github.cocosip.dcm4che.imageio.codecs` |
-| Phase 1 codec scope | 12 transfer syntaxes (see Section 2) | Same 12 + RLE (13 total, all in this project) |
+| Phase 1 codec scope | 11 JPEG/JPEG-LS/JPEG 2000-family syntaxes plus RLE | Same 12 total transfer syntaxes (see Section 2) |
 
 ### Why This Project Is Needed
 
@@ -66,7 +67,8 @@ native dependency. It is useful for readable algorithm and adapter evidence beca
 - Since 5.31.2, dcm4che uses `weasis-core-img` (OpenCV JNI wrapper) which is better but:
   - Requires glibc (no Alpine/musl without compatibility layer).
   - Requires Java 17+ for the native module.
-  - HTJ2K encoding depends on upstream OpenJPEG progress.
+  - HTJ2K support requires a separate OpenJPH/native integration path rather than the
+    classic OpenJPEG path.
   - The native library brings a large transitive dependency.
 - This project provides an independently maintainable, pure Java codec layer that can be
   dropped into any dcm4che deployment without native library requirements.
@@ -380,9 +382,11 @@ replaces that mapping. The implementation and verification plan is recorded in
 
 Transfer syntaxes:
 - JPEG 2000 Lossless (`.90`): classic JPEG 2000, reversible 5/3 DWT, lossless.
-- JPEG 2000 Lossy (`.91`): irreversible 9/7 DWT, EBCOT/MQ entropy coding, lossy.
+- JPEG 2000 Lossy (`.91`): EBCOT/MQ with reversible 5/3 or irreversible 9/7;
+  the reference-compatible default is irreversible.
 - HTJ2K Lossless (`.201`): JPEG 2000 Part 15, HT block coding, lossless.
-- HTJ2K Lossless RPCL (`.202`): same as `.201` but RPCL progression order enforced.
+- HTJ2K Lossless RPCL (`.202`): same as `.201`; RPCL is the default, while the
+  reference adapters pass through the caller-selected progression order.
 - HTJ2K Lossy (`.203`): HTJ2K with irreversible path.
 
 Key design points:
@@ -390,23 +394,43 @@ Key design points:
   signature) must be detected and rejected.
 - **Excluded**: JPEG 2000 Part 2 multi-component (`.92/.93`), JPIP, JPT, component
   subsampling — all fail with managed exceptions.
-- JPEG 2000 classic pipeline: validate/normalize input → level shift → optional RCT/ICT →
+- JPEG 2000 classic pipeline: validate/normalize input → level shift → required public-path RCT/ICT for three components →
   reversible/irreversible DWT → quantization (lossy) → tile/precinct/code-block partitioning →
   EBCOT/MQ entropy coding → packet/marker writing.
 - HTJ2K pipeline: same outer structure but uses Part 15 MEL/VLC/MagSgn HT block coding
   instead of EBCOT/MQ. Classic and HTJ2K **must maintain separate entry points** even
   when sharing structural infrastructure.
+- **Reuse boundary**: keep one Maven module with `jpeg2000.common`,
+  `jpeg2000.classic`, and `jpeg2000.htj2k` packages. Common code is limited to
+  bounded marker framing, immutable geometry/value records, raster normalization,
+  identical transform math, and stateless progression coordinates. Mutable packet
+  contributions, tag trees, quantization/profile policy, and entropy state remain
+  family-specific.
 - **Photometric handling**:
   - `YBR_FULL` and `YBR_FULL_422` → normalize to RGB before MCT.
-  - Lossless: output photometric → `YBR_RCT` after encode.
-  - Lossy: output photometric → `YBR_ICT` after encode.
-  - Decoder: obtain MCT state from COD marker; after three-component MCT decode,
-    write interleaved RGB metadata.
-- **Parameters**: `Irreversible`, `Rate`, `RateLevels`, `AllowMCT`,
-  `UpdatePhotometricInterpretation`, `EncodeSignedPixelValuesAsUnsigned`,
-  progression order (LRCP/RLCP/RPCL/PCRL/CPRL).
-- Supported markers: SIZ, COD, COC, QCD, QCC, SOT, SOD, EOC, COM, POC, RGN, PPM/PPT, SOP/EPH.
-- HTJ2K rejects unsupported RGN and PPM/PPT semantics.
+  - Public three-component writers always use the transfer-syntax-compatible MCT,
+    so COD agrees with dcm4che `Compressor`, which writes `YBR_RCT` for
+    `.90/.201/.202` and `YBR_ICT` for `.91/.203`.
+  - `ImageDescriptor` is read-only. The codec does not update photometric or planar
+    metadata; dcm4che `Compressor`, or a direct ImageIO caller, owns dataset changes.
+  - Decoder obtains MCT state from COD and returns the reconstructed raster without
+    mutating the descriptor. `YBR_PARTIAL_422` is decode-compatible but rejected for
+    encode; embedded-overlay masking remains outside this codec contract.
+- **Classic parameters**: `.91` `irreversible`, `rate`, `rateLevels`, progression
+  order, `targetRatio`/`numLayers`/`includeFinalLosslessLayer`, and signed-sample
+  policy. Explicit `targetRatio` takes precedence over native-compatible rate
+  levels.
+- **HT parameters**: `.202` progression order plus `targetRatio` and one fixed
+  quality layer. Transform, five decompositions, 64x64 blocks, MCT, TLM/CAP, and
+  resolution tile-part policy are fixed by the compatibility profile.
+- **Markers**: Classic writer baseline is SOC/SIZ/COD/QCD/COM/SOT/SOD/EOC;
+  the reader's semantic and advisory marker matrix is defined in the Classic plan.
+  `RESET` and `VSC` are COD/COC coding-style flags, not markers. HTJ2K adds
+  CAP/Rsiz validation and TLM output. Unknown markers with possible decoding
+  semantics are rejected rather than silently skipped.
+- **Tiles**: initial writers emit one full-image tile. Release decoders accept
+  multiple tiles and ordered tile-parts with complete `TPsot`/`TNsot`/`Psot`
+  validation.
 
 **dcm4che status**: `.90/.91/.201/.202/.203` mapped to `NativeImageReader` via
 opencv/OpenJPEG. This is the area with the most historical dcm4che issues. This project
@@ -420,10 +444,10 @@ replaces those mappings.
 |---|---|
 | `StreamSegment` reflection | `StreamSegment` uses reflection to access private fields of `FileImageInputStream`. Causes `InaccessibleObjectException` on Java 9+ without `--add-opens java.desktop/javax.imageio.stream=ALL-UNNAMED`. Plan to fix in dcm4che v6. |
 | Multi-fragment frame decoding | PS3.5 §8.2 allows one frame's encoded data to span multiple fragments. Fixed in dcm4che 5.35.0 (#1598). Custom Readers must handle this correctly. |
-| PhotometricInterpretation compatibility | dcm4che early JPEG 2000 encoding set `PhotometricInterpretation=YBR_RCT` incorrectly. Custom codec must set the correct value. Also verify `YBR_ICT`/`YBR_FULL_422` handling. |
+| PhotometricInterpretation compatibility | `ImageDescriptor` is immutable and the codec cannot set dataset tags. dcm4che `Compressor` owns destination photometric/planar metadata; the writer must ensure COD MCT state agrees with that host mapping. Also verify `YBR_ICT`/`YBR_FULL_422` handling. |
 | Signed pixel handling | For `BitsAllocated=16` / `BitsStored<16` / `PixelRepresentation=1`, decoded data must be sign-extended correctly. `desc.isSigned()` must gate this path. |
-| Embedded overlays | `ImageDescriptor.embeddedOverlays` — some legacy devices encode overlay data in pixel high bits. Mask off high bits for affected images. |
-| Even-length frame rule | DICOM encapsulated frames must have even-length byte buffers. Pad with zero if necessary. This is easy to forget and causes downstream parse failures. |
+| Embedded overlays | Overlay masking is not part of the JPEG 2000 codec contract. It requires an explicit descriptor-level policy and fixtures before implementation. |
+| Even-length frame rule | DICOM encapsulation owns an optional trailing pad byte. Codec parsing and marker/tile lengths use only the logical SOC-through-EOC codestream; frame assembly must not inject padding before codec parsing. |
 | Java 9+ module system | `--add-opens` workaround for `StreamSegment` reflection is an imperfect solution. Prefer `BytesWithImageImageDescriptor` input paths where possible to avoid the reflective `FileImageInputStream.raf` access entirely. |
 
 ---
@@ -493,14 +517,14 @@ Its public API must be stable before any codec module is written.
 ```
 io.github.cocosip.dcm4che.imageio.codecs
 ├── core/
-│   ├── spi/         AbstractDicomImageReader, AbstractDicomImageWriter, DicomImageReaderSpi
-│   ├── stream/      DicomStreamAdapter (ImageDescriptor extraction)
-│   ├── color/       PhotometricConverter
-│   └── util/        FrameAssembler, DicomCodecUtils
-└── CodecRegistrar   (entry point: loads all properties files)
+│   ├── spi/         AbstractDicomImageReader/Writer and their SPI bases
+│   ├── stream/      DicomImageStreams (ImageDescriptor extraction)
+│   ├── image/       DicomImageTypes
+│   └── registry/    CodecRegistrations
+└── <family>/        codec-specific readers, writers, algorithms, and registrations
 ```
 
-### 9.2 DicomStreamAdapter
+### 9.2 DicomImageStreams
 
 **Responsibility**: Extract `ImageDescriptor` from an `ImageInputStream` regardless of
 which concrete stream type dcm4che has passed in.
@@ -512,10 +536,10 @@ dcm4che passes two possible stream types to a codec:
 Both types expose `getImageDescriptor()` but share no common interface. The adapter
 performs the `instanceof` check in one place so codec modules never need to.
 
-**API contract**:
+**Current API contract**:
 ```
-DicomStreamAdapter.getImageDescriptor(ImageInputStream stream) → ImageDescriptor
-    throws IllegalArgumentException if stream type is unrecognised
+DicomImageStreams.requireDescriptor(Object stream) → ImageDescriptor
+    throws IllegalArgumentException if the stream type is unrecognised or has no descriptor
 ```
 
 **Note on `StreamSegment`**: dcm4che-imageio-opencv provides `StreamSegment.getStreamSegment()`
@@ -534,18 +558,18 @@ subclasses only implement the actual decoding logic.
 
 | Method | Implementation |
 |---|---|
-| `getNumImages(boolean)` | Returns `ImageDescriptor.frames` |
+| `getNumImages(boolean)` | Returns 1; each configured stream is one logical compressed frame |
 | `getWidth(int)` | Returns `ImageDescriptor.columns` |
 | `getHeight(int)` | Returns `ImageDescriptor.rows` |
 | `getRawImageType(int)` | Derived from `ImageDescriptor` (bits, samples) |
 | `getImageTypes(int)` | Single-element iterator over `getRawImageType` |
-| `read(int, ImageReadParam)` | Extracts `ImageDescriptor` via `DicomStreamAdapter`, then delegates to `readDicomFrame` |
+| `read(int, ImageReadParam)` | Validates index 0, then delegates to `readFrame` |
 | `setInput(...)` | Stores stream reference |
 | `reset()` | Clears stream reference |
 
 **Abstract method subclasses must implement**:
 ```
-readDicomFrame(ImageDescriptor descriptor, ImageInputStream stream, int frameIndex)
+readFrame(ImageDescriptor descriptor, ImageInputStream stream, ImageReadParam param)
     → BufferedImage
     throws IOException
 ```
@@ -566,21 +590,21 @@ failures (malformed bitstream, unsupported feature, etc.).
 | Method | Implementation |
 |---|---|
 | `getNumThumbnailsSupported(...)` | Returns 0 |
-| `write(IIOMetadata, IIOImage, ImageWriteParam)` | Extracts dimensions and delegates to `writeDicomFrame` |
+| `write(IIOMetadata, IIOImage, ImageWriteParam)` | Extracts the `RenderedImage` and delegates to `writeFrame` |
 | `setOutput(...)` | Stores stream reference |
 | `reset()` | Clears stream reference |
 
 **Abstract method subclasses must implement**:
 ```
-writeDicomFrame(ImageDescriptor descriptor, BufferedImage image,
-                ImageOutputStream stream, ImageWriteParam param)
+writeFrame(ImageDescriptor descriptor, RenderedImage image,
+           ImageOutputStream stream, ImageWriteParam param)
     → void
     throws IOException
 ```
 
 **Note on ImageDescriptor for writes**: During encoding, `ImageDescriptor` is provided by
 dcm4che's `Compressor` the same way as for reads — attached to the output stream.
-The base class extracts it via `DicomStreamAdapter` before calling `writeDicomFrame`.
+The base class extracts it via `DicomImageStreams` before calling `writeFrame`.
 
 ### 9.5 DicomImageReaderSpi (and DicomImageWriterSpi)
 
@@ -599,57 +623,47 @@ filled in. Each codec module subclasses this to provide only codec-specific meta
 newReader(ImageReaderSpi originatingSpi) → AbstractDicomImageReader
 ```
 
-### 9.6 PhotometricConverter
+### 9.6 Pixel and photometric conversion ownership
 
-**Responsibility**: All photometric interpretation conversions shared across codec families.
-No codec module should implement color space conversion independently.
+Generic photometric/layout conversion is currently implemented within codec
+families as needed; there is no `core.color.PhotometricConverter` class. Move a
+conversion into core only after at least two implemented families need the same
+sample-level semantics. JPEG 2000-specific RCT/ICT math belongs in
+`jpeg2000.common`; DICOM metadata policy remains owned by dcm4che's compressor.
 
 **Conversions required**:
 
 | From | To | When |
 |---|---|---|
-| `MONOCHROME1` | `MONOCHROME2` | Decode: invert pixel values |
+| `MONOCHROME1` | unchanged sample codes | Codec boundary preserves values; rendering owns display inversion |
 | `YBR_FULL` | `RGB` | Decode: JPEG/JPEG-LS YCbCr → RGB |
 | `YBR_FULL_422` | `RGB` | Decode: 4:2:2 chroma upsample then YCbCr → RGB |
-| `YBR_RCT` | `RGB` | Decode: JPEG 2000 reversible color transform inverse |
-| `YBR_ICT` | `RGB` | Decode: JPEG 2000 irreversible color transform inverse |
 | `RGB` | `YBR_FULL` | Encode: RGB → YCbCr (for codecs that require it) |
-| `RGB` | `YBR_RCT` | Encode: JPEG 2000 lossless color transform |
-| `RGB` | `YBR_ICT` | Encode: JPEG 2000 lossy color transform |
 
 **Design note**: Conversions must operate on raw `byte[]` / `short[]` pixel buffers at
 the precision of the source (`BitsStored`). Do not use `java.awt.color.ColorSpace` — it
 converts through float and loses precision for 12/16-bit DICOM images.
 
-### 9.7 FrameAssembler
+### 9.7 Logical frame boundary
 
-**Responsibility**: Reassemble a complete frame from one or more pixel data fragments.
+Each reader receives one logical frame through dcm4che's
+`SegmentedInputImageStream`; dcm4che owns fragment traversal and Basic Offset Table
+interpretation. There is no core `FrameAssembler`. A codec may copy a bounded
+logical codestream when its algorithm requires contiguous input, but must stop at
+the codec terminator (for JPEG 2000, EOC) and exclude any DICOM even-length padding.
 
-DICOM PS3.5 §8.2 allows one frame to span multiple Basic Offset Table fragments.
-`SegmentedInputImageStream` in dcm4che 5.35.x handles multi-fragment frames correctly
-(fixed in #1598), but the `FrameAssembler` utility provides a tested, isolated helper for
-assembling fragment byte arrays into a single contiguous `byte[]` ready for the codec.
+### 9.8 CodecRegistrations
 
-**API contract**:
-```
-FrameAssembler.assemble(List<byte[]> fragments) → byte[]
-    // concatenates fragments, pads to even length if needed (DICOM even-length rule)
-```
-
-### 9.8 CodecRegistrar
-
-**Responsibility**: Convenience entry point for application code to register all codecs
-in one call.
+**Responsibility**: Incrementally load one codec family's reader and writer property
+resources into the dcm4che factories.
 
 ```
-CodecRegistrar.registerAll()
-    // Loads dcm4che-imageio-codecs-readers.properties and
-    //        dcm4che-imageio-codecs-writers.properties
-    // into ImageReaderFactory.getDefault() and ImageWriterFactory.getDefault()
+CodecRegistrations.load(anchorClass, readersResource, writersResource)
+    // Loads family-owned resources into ImageReaderFactory/ImageWriterFactory
 ```
 
-Applications that want finer control can load the per-family properties files directly.
-`CodecRegistrar` is a shortcut for the common case.
+Each family owns its registration resources and calls this helper; loading one
+family does not replace mappings already installed by another family.
 
 ### 9.9 What core does NOT contain
 
@@ -659,9 +673,9 @@ Applications that want finer control can load the per-family properties files di
 
 ---
 
-## 10. Open Questions (Minor)
+## 10. Remaining Question and Historical Decision
 
-### 9.1 Whether to define a higher-level DICOM codec abstraction (internal only)
+### 10.1 Whether to define a higher-level DICOM codec abstraction (internal only)
 
 dcm4che has no equivalent to fo-dicom's `IDicomCodec`. Should this project add its own
 internal interface above `javax.imageio` SPI that directly exposes `ImageDescriptor`?
@@ -671,18 +685,19 @@ internal interface above `javax.imageio` SPI that directly exposes `ImageDescrip
 - **Con**: dcm4che's `Transcoder`/`Decompressor` still routes through the javax.imageio
   path anyway; the abstraction only helps within this project's own codebase.
 
-### 9.2 Classic JPEG: implement from scratch or delegate 8-bit path to JDK?
+### 10.2 Classic JPEG implementation strategy (resolved)
 
 The JDK's built-in `javax.imageio` JPEG reader covers 8-bit sequential DCT (Process 1/2/4
 in typical cases). It does NOT support 12-bit or lossless predictive (Process 14/14 SV1).
-Options:
+The original options were:
 
 - **Full pure Java from scratch** (as fo-dicom.PureCodecs did) — consistent code path,
   full control, no reliance on JDK JPEG internals.
 - **Delegate 8-bit baseline to JDK, implement only 12-bit and lossless paths** — less code,
   but two different code paths; JDK JPEG reader has its own quirks around color space handling.
 
-**Recommendation**: implement from scratch for consistency, mirroring fo-dicom.PureCodecs.
+**Decision**: the checked-in JPEG module uses the project's pure-Java codec path;
+the JDK decoder is not the normative implementation.
 
 ---
 
@@ -696,40 +711,42 @@ dcm4che-imageio-codecs/
 ├── LICENSE                                               # Apache License 2.0
 ├── .gitignore
 ├── docs/
-│   └── design.md                                         # This file
+│   ├── design.md                                         # This file
+│   ├── jpeg-complete-development-plan.md                 # JPEG design
+│   ├── jpegls-development-plan.md                        # JPEG-LS design
+│   ├── jpeg2000-development-plan.md                      # Classic JPEG 2000 design
+│   └── htj2k-development-plan.md                         # HTJ2K design
 ├── dcm4che-imageio-codecs-core/
-│   └── src/main/resources/
-│       ├── dcm4che-imageio-codecs-readers.properties     # Aggregated UID→Reader mapping (all families)
-│       └── dcm4che-imageio-codecs-writers.properties     # Aggregated UID→Writer mapping (all families)
+│   └── src/main/java/.../core/                            # Shared ImageIO lifecycle and registration helpers
 ├── dcm4che-imageio-codecs-rle/
-│   └── src/main/resources/META-INF/services/            # SPI auto-discovery for RLE
+│   └── src/main/resources/                               # Family properties + ImageIO SPI
 ├── dcm4che-imageio-codecs-jpeg/
-│   └── src/main/resources/META-INF/services/            # SPI auto-discovery for JPEG
+│   └── src/main/resources/                               # Family properties + ImageIO SPI
 ├── dcm4che-imageio-codecs-jpegls/
-│   └── src/main/resources/META-INF/services/            # SPI auto-discovery for JPEG-LS
+│   └── src/main/resources/                               # Family properties + ImageIO SPI
 └── dcm4che-imageio-codecs-jpeg2000/
-    └── src/main/resources/META-INF/services/            # SPI auto-discovery for JPEG 2000 + HTJ2K
+    └── src/main/resources/META-INF/services/             # Empty scaffold until codec gates pass
 ```
 
 ### Status
 
 - Architecture research complete.
-- Transfer syntax scope confirmed (12 syntaxes + RLE = 13 total across 5 modules).
+- Transfer syntax scope confirmed (11 JPEG-family syntaxes plus RLE = 12 total
+  across 5 modules).
 - Registration mechanism decided (programmatic incremental load).
 - Multi-module Maven structure created (parent + core + rle + jpeg + jpegls + jpeg2000).
 - Implementation language decided: **pure Java, no JNI**.
 - License: Apache 2.0.
 - Version management: `${revision}` in parent POM + `flatten-maven-plugin`.
 - Development order decided (core → rle → jpeg → jpegls → jpeg2000).
-- Core, RLE, and the JPEG module's Baseline Process 1, Extended Process 2/4,
-  Lossless Process 14, and Lossless Process 14 SV1 slices are implemented;
+- Core, RLE, JPEG, and JPEG-LS encode/decode paths are implemented.
 - The JPEG status matrix in Section 6.2 is the source of truth: Baseline
   Process 1 `.50`, Extended Process 2/4 `.51`, Lossless Process 14 `.57`, and
   Lossless Process 14 SV1 `.70` are registered.
-- JPEG-LS and JPEG 2000/HTJ2K modules remain scaffolds without codec code.
-- The JPEG-LS implementation plan is recorded in `docs/jpegls-development-plan.md`;
-  implementation has not started.
-- Two minor open questions remain (see Section 9).
+- JPEG 2000/HTJ2K remains a scaffold without codec code; its two reviewed design
+  documents define the next sequential phases.
+- One optional internal-abstraction question remains (see Section 10.1); the
+  Classic JPEG implementation strategy in Section 10.2 is resolved.
 
 ---
 
@@ -750,9 +767,10 @@ dcm4che-imageio-codecs/
 ### Reference Projects
 
 - **[fo-dicom.Codecs](https://github.com/Efferent-Health/fo-dicom.Codecs)** — official
-  native codec package for fo-dicom. Wraps CharLS (JPEG-LS), OpenJPEG (JPEG 2000/HTJ2K),
-  and libjpeg-turbo (JPEG) via P/Invoke. Defines the Phase 1 transfer syntax scope and
-  the `IDicomCodec` / `ITranscoderManager` interface contract.
+  native codec package for fo-dicom. Wraps CharLS (JPEG-LS), OpenJPEG (classic
+  JPEG 2000), OpenJPH (HTJ2K), and libjpeg-turbo (JPEG) via P/Invoke. Defines
+  the Phase 1 transfer syntax scope and the `IDicomCodec` /
+  `ITranscoderManager` interface contract.
 
 - **[fo-dicom.PureCodecs](https://github.com/cocosip/fo-dicom.PureCodecs)** — pure C#
   replacement for fo-dicom.Codecs; the primary algorithm reference for this project.
@@ -763,6 +781,14 @@ dcm4che-imageio-codecs/
   - `docs/design/jpeg-codec-design.md` — JPEG family design
   - `docs/design/jpegls-codec-design.md` — JPEG-LS design
   - `docs/design/jpeg2000-codec-design.md` — JPEG 2000 + HTJ2K design
+
+This Java project keeps the implementation plan for the two JPEG 2000 phases in
+separate documents:
+
+  - [`jpeg2000-development-plan.md`](jpeg2000-development-plan.md) — classic
+    JPEG 2000 (`.90/.91`), including DICOM/ImageIO and EBCOT/MQ boundaries
+  - [`htj2k-development-plan.md`](htj2k-development-plan.md) — HTJ2K
+    (`.201/.202/.203`), including Part 15 block coding and RPCL policy
 
 ### Standards
 

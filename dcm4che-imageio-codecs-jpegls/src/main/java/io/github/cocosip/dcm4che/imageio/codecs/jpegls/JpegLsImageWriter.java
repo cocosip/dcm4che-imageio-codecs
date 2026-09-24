@@ -41,7 +41,8 @@ class JpegLsImageWriter extends AbstractDicomImageWriter {
         if (lossless && allowedError != 0) {
             throw new IIOException("JPEG-LS Lossless requires allowedError=0");
         }
-        int[] samples = JpegLsRasterFrames.toSamples(descriptor, image);
+        int[] samples = JpegLsRasterFrames.toSamples(descriptor, image,
+                descriptor.isSigned() && allowedError > 0);
         int precision = descriptor.getBitsStored();
         int interleave = descriptor.getSamples() == 1 ? 0 : 2;
         if (descriptor.getSamples() > 1 && param instanceof JpegLsImageWriteParam) {
@@ -49,8 +50,15 @@ class JpegLsImageWriter extends AbstractDicomImageWriter {
         }
         int restartInterval = param instanceof JpegLsImageWriteParam
                 ? ((JpegLsImageWriteParam) param).getRestartInterval() : 0;
+        java.util.List<JpegLsMappingTable> mappingTables = java.util.Collections.emptyList();
+        java.util.Map<Integer, Integer> mappingSelectors = java.util.Collections.emptyMap();
+        if (param instanceof JpegLsImageWriteParam) {
+            JpegLsImageWriteParam jpeglsParam = (JpegLsImageWriteParam) param;
+            mappingTables = jpeglsParam.getMappingTables();
+            mappingSelectors = jpeglsParam.getComponentMappingTableSelectors();
+        }
         output.write(JpegLsFrameCodec.encode(descriptor.getColumns(), descriptor.getRows(),
                 precision, descriptor.getSamples(), allowedError, interleave,
-                restartInterval, samples));
+                restartInterval, samples, mappingTables, mappingSelectors));
     }
 }

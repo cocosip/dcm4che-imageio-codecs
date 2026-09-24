@@ -4,6 +4,6 @@ import javax.imageio.spi.ImageReaderSpi;
 
 public final class JpegLsLosslessImageReader extends JpegLsImageReader {
     public JpegLsLosslessImageReader(ImageReaderSpi provider) {
-        super(provider);
+        super(provider, true);
     }
 }

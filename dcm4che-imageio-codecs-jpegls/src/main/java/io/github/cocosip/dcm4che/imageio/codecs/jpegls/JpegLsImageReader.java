@@ -1,8 +1,6 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpegls;
 
-import java.awt.Point;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 import javax.imageio.IIOException;
@@ -12,53 +10,46 @@ import javax.imageio.stream.ImageInputStream;
 
 import org.dcm4che3.imageio.codec.ImageDescriptor;
 
-import io.github.cocosip.dcm4che.imageio.codecs.core.image.DicomImageTypes;
 import io.github.cocosip.dcm4che.imageio.codecs.core.spi.AbstractDicomImageReader;
 import io.github.cocosip.dcm4che.imageio.codecs.jpegls.internal.JpegLsFrameCodec;
 
 class JpegLsImageReader extends AbstractDicomImageReader {
-    JpegLsImageReader(ImageReaderSpi provider) {
+    private final boolean lossless;
+
+    JpegLsImageReader(ImageReaderSpi provider, boolean lossless) {
         super(provider);
+        this.lossless = lossless;
     }
 
     @Override
     protected BufferedImage readFrame(ImageDescriptor descriptor,
             ImageInputStream input, ImageReadParam param) throws IOException {
-        validateReadParam(param);
-        byte[] encoded = readRemaining(input);
-        JpegLsFrameCodec.DecodedFrame frame = JpegLsFrameCodec.decode(encoded);
+        byte[] encoded = trimDicomFragmentPadding(readRemaining(input));
+        JpegLsFrameCodec.DecodedFrame frame;
+        try {
+            frame = JpegLsFrameCodec.decode(encoded);
+        } catch (IIOException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new IIOException("Malformed JPEG-LS codestream: " + e.getMessage(), e);
+        }
         if (frame.width() != descriptor.getColumns() || frame.height() != descriptor.getRows()
                 || frame.precision() != descriptor.getBitsStored()
                 || frame.components() != descriptor.getSamples()) {
             throw new IIOException("JPEG-LS frame header does not match DICOM descriptor");
         }
-        BufferedImage image = destination(descriptor, param);
-        JpegLsRasterFrames.copyToImage(descriptor, frame.samples(), image);
-        return image;
-    }
-
-    private static BufferedImage destination(ImageDescriptor descriptor, ImageReadParam param) {
-        if (param != null && param.getDestination() != null) return param.getDestination();
-        if (param != null && param.getDestinationType() != null) {
-            return param.getDestinationType().createBufferedImage(
-                    descriptor.getColumns(), descriptor.getRows());
+        if (lossless && frame.nearLossless() != 0) {
+            throw new IIOException("JPEG-LS Lossless reader received a non-zero NEAR frame");
         }
-        return DicomImageTypes.createImage(descriptor);
-    }
-
-    private static void validateReadParam(ImageReadParam param) throws IIOException {
-        if (param == null) return;
-        Point offset = param.getDestinationOffset();
-        if (param.getSourceRegion() != null || param.getSourceXSubsampling() != 1
-                || param.getSourceYSubsampling() != 1 || offset.x != 0 || offset.y != 0
-                || param.getSourceBands() != null || param.getDestinationBands() != null) {
-            throw new IIOException("JPEG-LS reader does not support regions, subsampling, "
-                    + "offsets, or band selection yet");
+        if (frame.hasMappedOutput()) {
+            throw new IIOException("JPEG-LS mapping table output cannot be represented by a DICOM Raster");
         }
+        return JpegLsRasterFrames.toImage(descriptor, frame.samples(), param,
+                descriptor.isSigned() && frame.nearLossless() > 0);
     }
 
     static byte[] readRemaining(ImageInputStream input) throws IOException {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
         int read;
         while ((read = input.read(buffer)) >= 0) {
@@ -71,5 +62,17 @@ class JpegLsImageReader extends AbstractDicomImageReader {
             }
         }
         return bytes.toByteArray();
+    }
+
+    private static byte[] trimDicomFragmentPadding(byte[] encoded) {
+        if (encoded.length >= 3
+                && encoded[encoded.length - 3] == (byte) 0xff
+                && encoded[encoded.length - 2] == (byte) 0xd9
+                && encoded[encoded.length - 1] == 0) {
+            byte[] trimmed = new byte[encoded.length - 1];
+            System.arraycopy(encoded, 0, trimmed, 0, trimmed.length);
+            return trimmed;
+        }
+        return encoded;
     }
 }

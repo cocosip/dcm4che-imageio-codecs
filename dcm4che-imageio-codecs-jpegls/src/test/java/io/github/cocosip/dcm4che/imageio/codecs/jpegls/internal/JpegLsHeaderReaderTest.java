@@ -2,6 +2,7 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpegls.internal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -68,6 +69,18 @@ class JpegLsHeaderReaderTest {
                 marker(0xd9));
 
         assertThrows(JpegLsException.class, () -> read(stream));
+    }
+
+    @Test
+    void rejectsDnlBeforeStartOfScanWithPlacementError() throws Exception {
+        byte[] stream = codestream(
+                sof55(8, 0, 2, new int[][] {{1, 0x11, 0}}),
+                segment(0xdc, 0, 2),
+                sos(new int[][] {{1, 0}}, 0, 0, 0));
+
+        JpegLsException error = assertThrows(JpegLsException.class, () -> read(stream));
+
+        assertTrue(error.getMessage().contains("only valid after SOS"));
     }
 
     @Test

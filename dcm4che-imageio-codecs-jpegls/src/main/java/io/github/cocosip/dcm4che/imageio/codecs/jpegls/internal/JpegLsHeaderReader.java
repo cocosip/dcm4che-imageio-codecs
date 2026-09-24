@@ -69,7 +69,7 @@ final class JpegLsHeaderReader {
                     validateMappingTables(mappingTables, scan, preset.maximumSampleValue());
                     int transform = colorTransform == null ? 0 : colorTransform.intValue();
                     JpegLsColorTransform.validate(transform, frame.componentCount(), frame.precision());
-                    return new JpegLsHeader(frame, scan, preset, mappingTables,
+                    return new JpegLsHeader(frame, scan, preset, rawPreset, mappingTables,
                             restartInterval, transform);
                 case JpegLsMarker.EOI:
                     throw new JpegLsException("JPEG-LS EOI marker precedes SOS");
@@ -96,7 +96,7 @@ final class JpegLsHeaderReader {
                     }
                     break;
                 case JpegLsMarker.DNL:
-                    throw new JpegLsException("JPEG-LS DNL marker is not implemented yet");
+                    throw new JpegLsException("JPEG-LS DNL marker is only valid after SOS");
                 case JpegLsMarker.DRI:
                     restartInterval = parseRestartInterval(marker.payload());
                     break;
@@ -110,7 +110,7 @@ final class JpegLsHeaderReader {
         }
     }
 
-    private static long parseRestartInterval(byte[] payload) throws JpegLsException {
+    static long parseRestartInterval(byte[] payload) throws JpegLsException {
         if (payload.length < 2 || payload.length > 4) {
             throw new JpegLsException("JPEG-LS DRI payload must contain 2, 3, or 4 bytes");
         }
@@ -119,7 +119,7 @@ final class JpegLsHeaderReader {
         return value;
     }
 
-    private static Integer parseColorTransform(byte[] payload, Integer previous)
+    static Integer parseColorTransform(byte[] payload, Integer previous)
             throws JpegLsException {
         if (payload.length != 5 || payload[0] != 'm' || payload[1] != 'r'
                 || payload[2] != 'f' || payload[3] != 'x') {

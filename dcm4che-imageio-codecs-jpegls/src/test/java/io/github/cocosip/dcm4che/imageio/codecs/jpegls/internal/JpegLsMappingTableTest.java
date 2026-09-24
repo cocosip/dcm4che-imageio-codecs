@@ -125,4 +125,28 @@ class JpegLsMappingTableTest {
         JpegLsMappingTable table = new JpegLsMappingTable(1, 1, new byte[] {1});
         assertThrows(IndexOutOfBoundsException.class, () -> table.entry(1));
     }
+
+    @Test
+    void rejectsMappingTableBeyondPartOneMaximumBeforeUnboundedGrowth() throws Exception {
+        JpegLsMappingTableParser parser = new JpegLsMappingTableParser();
+        byte[] segment = new byte[65533];
+        segment[1] = 13;
+        segment[2] = 1;
+        for (int index = 0; index < 256; index++) {
+            segment[0] = (byte) (index == 0 ? 2 : 3);
+            if (index == 255) {
+                assertThrows(JpegLsException.class, () -> parser.accept(segment));
+            } else {
+                parser.accept(segment);
+            }
+        }
+    }
+
+    @Test
+    void rejectsPublicMappingTableBeyondPartOneMaximum() {
+        byte[] entries = new byte[65536 * 255 + 1];
+        assertThrows(IllegalArgumentException.class,
+                () -> new io.github.cocosip.dcm4che.imageio.codecs.jpegls.JpegLsMappingTable(
+                        1, 1, entries));
+    }
 }

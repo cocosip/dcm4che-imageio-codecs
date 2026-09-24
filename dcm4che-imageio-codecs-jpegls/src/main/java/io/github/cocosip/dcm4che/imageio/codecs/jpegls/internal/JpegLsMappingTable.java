@@ -22,6 +22,12 @@ final class JpegLsMappingTable {
         this.entries = Arrays.copyOf(entries, entries.length);
     }
 
+    static JpegLsMappingTable from(
+            io.github.cocosip.dcm4che.imageio.codecs.jpegls.JpegLsMappingTable table)
+            throws JpegLsException {
+        return new JpegLsMappingTable(table.getTableId(), table.getEntryWidth(), table.getEntries());
+    }
+
     int tableId() {
         return tableId;
     }

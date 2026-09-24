@@ -3,6 +3,7 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpegls.internal;
 import java.io.ByteArrayOutputStream;
 
 final class JpegLsMappingTableParser {
+    private static final long MAXIMUM_ENTRY_BYTES = 65536L * 255L;
     private final ByteArrayOutputStream entries = new ByteArrayOutputStream();
     private int tableId;
     private int entryWidth;
@@ -35,6 +36,9 @@ final class JpegLsMappingTableParser {
         int dataLength = payload.length - 3;
         if (dataLength == 0 || dataLength % entryWidth != 0) {
             throw new JpegLsException("misaligned JPEG-LS mapping table segment");
+        }
+        if ((long) entries.size() + dataLength > MAXIMUM_ENTRY_BYTES) {
+            throw new JpegLsException("JPEG-LS mapping table exceeds Part 1 limits");
         }
         entries.write(payload, 3, dataLength);
     }

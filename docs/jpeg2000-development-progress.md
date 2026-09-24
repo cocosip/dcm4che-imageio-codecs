@@ -35,12 +35,12 @@ Snapshot date: 2026-09-24
 | Item | State | Evidence |
 | --- | --- | --- |
 | Classic JPEG 2000 design | `COMPLETE` | `docs/jpeg2000-development-plan.md`, commit `2fd09f2` |
-| Java implementation | `IN_PROGRESS` | P1 codestream/marker foundation complete with 24 focused tests. |
+| Java implementation | `IN_PROGRESS` | P1-P2 complete with 58 focused module tests. |
 | SPI registration | `NOT_STARTED` | Reader and writer service entries remain commented out. |
 | External interoperability | `NOT_STARTED` | No committed `.90/.91` fixtures or external pixel checks exist. |
-| Active phase | `P2` | Geometry, raster normalization, RCT, and reversible 5/3 DWT |
+| Active phase | `P3` | MQ coder and EBCOT code-block coding |
 
-Implementation progress is **1 of 9 phases complete**. Design completion is
+Implementation progress is **2 of 9 phases complete**. Design completion is
 tracked separately and is not counted as codec implementation.
 
 ## 4. Delivery Sequence
@@ -48,7 +48,7 @@ tracked separately and is not counted as codec implementation.
 | Phase | Deliverable | Depends on | State |
 | --- | --- | --- | --- |
 | P1 | Bounded codestream and marker foundation | Design baseline | `COMPLETE` |
-| P2 | Geometry, raster normalization, RCT, and reversible 5/3 DWT | P1 | `NOT_STARTED` |
+| P2 | Geometry, raster normalization, RCT, and reversible 5/3 DWT | P1 | `COMPLETE` |
 | P3 | MQ coder and EBCOT code-block coding | P1-P2 | `NOT_STARTED` |
 | P4 | Tag trees, packets, progression orders, tiles, and tile-parts | P1-P3 | `NOT_STARTED` |
 | P5 | `.90` lossless codec vertical slice | P1-P4 | `NOT_STARTED` |
@@ -133,14 +133,16 @@ and does not enable ImageIO service entries.
 
 ### P2: Geometry, raster normalization, RCT, and reversible 5/3 DWT
 
-- Build immutable image/tile/component/resolution/subband/code-block geometry
-  with odd-origin and odd-dimension coverage.
-- Convert 8/16-bit DICOM raster layouts, planar RGB, `YBR_FULL`, and
-  `YBR_FULL_422` to normalized components while preserving signed sample
-  semantics and Palette Color indices.
-- Implement exact forward/inverse RCT and reversible 5/3 lifting with boundary
-  extension tests.
-- Reject unsupported photometric interpretations, invalid frame lengths,
+- [x] Build immutable image/tile/component/resolution/subband/code-block
+  geometry with odd-origin, odd-dimension, clipped edge, empty subband, and
+  checked pre-allocation coverage.
+- [x] Convert 8/16-bit DICOM raster layouts, planar RGB, `YBR_FULL`, and
+  row-bounded `YBR_FULL_422` to normalized components while preserving signed
+  sample semantics, allocated container width, and Palette Color indices.
+- [x] Implement exact forward/inverse RCT and reversible 5/3 lifting with
+  single-sample, odd/even length, multi-level, degenerate-axis, and symmetric
+  boundary-extension tests.
+- [x] Reject unsupported photometric interpretations, invalid frame lengths,
   `YBR_PARTIAL_422`/`YBR_PARTIAL_420` encode, and implicit overlay masking.
 
 **Exit gate:** exact forward/inverse reconstruction passes for 8/12/16-bit,
@@ -273,8 +275,10 @@ declared complete and HTJ2K planning move into implementation.
 | Date | Phase | Reference | Command or artifact | Result |
 | --- | --- | --- | --- | --- |
 | 2026-09-24 | Baseline | `2fd09f2` | Repository inspection | Design present; JPEG 2000 module contains no Java implementation/tests; SPI entries commented. |
-| 2026-09-24 | P1 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000LimitsTest,Jpeg2000MarkerIoTest,Jpeg2000CodestreamReaderTest,Jpeg2000ClassicCodestreamTest" test` | 24 JPEG 2000 tests passed. |
-| 2026-09-24 | P1 | Working tree | `./mvnw.cmd test` | Full reactor passed: 275 tests, 0 failures, 0 errors, 0 skipped. |
+| 2026-09-24 | P1 | `ca02e85` | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000LimitsTest,Jpeg2000MarkerIoTest,Jpeg2000CodestreamReaderTest,Jpeg2000ClassicCodestreamTest" test` | 24 JPEG 2000 tests passed. |
+| 2026-09-24 | P1 | `ca02e85` | `./mvnw.cmd test` | Full reactor passed: 275 tests, 0 failures, 0 errors, 0 skipped. |
+| 2026-09-24 | P2 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000GeometryTest,Jpeg2000Dwt53Test,Jpeg2000ComponentTransformTest,Jpeg2000RasterNormalizerTest" test` | 34 P2 tests passed, including the 8/12/16-bit signed/unsigned reversible raster matrix. |
+| 2026-09-24 | P2 | Working tree | `./mvnw.cmd test` | Full reactor passed: 309 tests, 0 failures, 0 errors, 0 skipped; JPEG 2000 module passed 58 tests. |
 
 For focused Java tests, use this PowerShell command shape and replace the test
 class name with the current phase suite:
@@ -296,8 +300,8 @@ dependencies, runtime fallbacks, or substitutes for the pure-Java implementation
 
 ## 9. Next Work Item
 
-Start P2 with immutable image/tile/component geometry and reversible 5/3 DWT
-tests. Cover one-sample signals, odd and even lengths, odd image dimensions,
-multi-level decomposition, integer boundary extension, and exact inverse
-reconstruction before adding raster normalization or RCT. P2 must not include
-MQ/EBCOT, packet state, ImageIO adapters, SPI activation, or HTJ2K code.
+Start P3 with independent MQ state-transition and byte-stuffing vectors before
+adding mutable coder state. Cover bounded refill/flush and every accepted
+termination mode, then implement significance-propagation, magnitude-refinement,
+and cleanup passes with fixed code-block vectors. P3 must not add packet state,
+ImageIO adapters, SPI activation, or HTJ2K code.

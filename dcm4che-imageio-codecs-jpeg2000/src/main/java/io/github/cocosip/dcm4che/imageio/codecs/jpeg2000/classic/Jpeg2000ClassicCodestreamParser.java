@@ -2,8 +2,10 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.classic;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000CodingStyleSegment;
@@ -127,32 +129,34 @@ public final class Jpeg2000ClassicCodestreamParser {
             }
         }
 
-        Jpeg2000StartOfTileSegment startOfTile = Jpeg2000StartOfTileSegment.parse(startSegment, size);
-        if (size.tileCount() != 1
-                || startOfTile.tileIndex() != 0
-                || startOfTile.tilePartIndex() != 0
-                || startOfTile.tilePartCount() != 1) {
-            throw markerError(startSegment, "P1 accepts one full-image tile-part only");
-        }
-        if (startOfTile.tilePartLength() == 0) {
-            throw markerError(startSegment, "Psot=0 is deferred until bounded multi-part decoding");
-        }
+        List<Jpeg2000ClassicTilePart> tileParts = new ArrayList<Jpeg2000ClassicTilePart>();
+        Map<Integer, TilePartState> tileStates = new HashMap<Integer, TilePartState>();
+        Jpeg2000MarkerSegment current = startSegment;
+        while (current.marker() == Jpeg2000Marker.SOT) {
+            Jpeg2000StartOfTileSegment startOfTile = Jpeg2000StartOfTileSegment.parse(current, size);
+            validateTilePartOrder(current, startOfTile, tileStates);
+            if (startOfTile.tilePartLength() == 0) {
+                throw markerError(current, "Psot=0 is unsupported because the tile-part boundary is ambiguous");
+            }
 
-        Jpeg2000MarkerSegment sod = reader.readNext();
-        if (sod.marker() != Jpeg2000Marker.SOD) {
-            throw markerError(sod, "SOD must immediately follow the P1 SOT marker");
+            Jpeg2000MarkerSegment sod = reader.readNext();
+            if (sod.marker() != Jpeg2000Marker.SOD) {
+                throw markerError(sod, "SOD must immediately follow SOT in the supported classic profile");
+            }
+            long tilePartEnd = checkedAdd(
+                    current.offset(), startOfTile.tilePartLength(), "SOT Psot");
+            long tileDataLength = tilePartEnd - reader.position();
+            if (tileDataLength < 0 || tileDataLength > Integer.MAX_VALUE) {
+                throw markerError(current, "SOT Psot is shorter than its tile-part header");
+            }
+            byte[] tileData = reader.readRaw((int) tileDataLength, "tile-part data");
+            tileParts.add(new Jpeg2000ClassicTilePart(startOfTile, tileData));
+            current = reader.readNext();
         }
-        long tilePartEnd = checkedAdd(startSegment.offset(), startOfTile.tilePartLength(), "SOT Psot");
-        long tileDataLength = tilePartEnd - reader.position();
-        if (tileDataLength < 0 || tileDataLength > Integer.MAX_VALUE) {
-            throw markerError(startSegment, "SOT Psot is shorter than its tile-part header");
+        if (current.marker() != Jpeg2000Marker.EOC) {
+            throw markerError(current, "only SOT or EOC may follow tile-part data");
         }
-        byte[] tileData = reader.readRaw((int) tileDataLength, "tile-part data");
-
-        Jpeg2000MarkerSegment eoc = reader.readNext();
-        if (eoc.marker() != Jpeg2000Marker.EOC) {
-            throw markerError(eoc, "EOC must immediately follow the P1 tile-part");
-        }
+        validateTilePartCompleteness(size, tileStates, current);
         return new Jpeg2000ClassicCodestream(
                 size,
                 coding,
@@ -160,9 +164,52 @@ public final class Jpeg2000ClassicCodestreamParser {
                 quantization,
                 componentQuantization,
                 comments,
-                startOfTile,
-                tileData,
+                tileParts,
                 reader.position());
+    }
+
+    private static void validateTilePartOrder(
+            Jpeg2000MarkerSegment segment,
+            Jpeg2000StartOfTileSegment start,
+            Map<Integer, TilePartState> states) throws Jpeg2000Exception {
+        Integer tile = Integer.valueOf(start.tileIndex());
+        TilePartState state = states.get(tile);
+        if (state == null) {
+            state = new TilePartState();
+            states.put(tile, state);
+        }
+        if (start.tilePartIndex() != state.nextIndex) {
+            throw markerError(segment, "TPsot must start at zero and increase by one for each tile");
+        }
+        int count = start.tilePartCount();
+        if (count != 0) {
+            if (state.declaredCount != 0 && state.declaredCount != count) {
+                throw markerError(segment, "TNsot is inconsistent with an earlier tile-part");
+            }
+            state.declaredCount = count;
+        }
+        state.nextIndex++;
+    }
+
+    private static void validateTilePartCompleteness(
+            Jpeg2000SizeSegment size,
+            Map<Integer, TilePartState> states,
+            Jpeg2000MarkerSegment eoc) throws Jpeg2000Exception {
+        if (states.size() != size.tileCount()) {
+            throw markerError(eoc, "one or more SIZ tiles have no tile-part");
+        }
+        for (Map.Entry<Integer, TilePartState> entry : states.entrySet()) {
+            TilePartState state = entry.getValue();
+            if (state.declaredCount != 0 && state.nextIndex != state.declaredCount) {
+                throw markerError(eoc, "tile " + entry.getKey()
+                        + " is missing one or more tile-parts declared by TNsot");
+            }
+        }
+    }
+
+    private static final class TilePartState {
+        private int nextIndex;
+        private int declaredCount;
     }
 
     private static void requireSize(Jpeg2000SizeSegment size, Jpeg2000MarkerSegment segment)

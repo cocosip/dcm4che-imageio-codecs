@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.util.List;
 
 import javax.imageio.stream.MemoryCacheImageInputStream;
 import javax.imageio.stream.MemoryCacheImageOutputStream;
@@ -123,6 +124,82 @@ class Jpeg2000ClassicCodestreamTest {
         assertEquals(17, readInt(bytes.toByteArray(), sot + 6));
     }
 
+    @Test
+    void parsesMultipleTilesAndInterleavedOrderedTileParts() throws Exception {
+        byte[] codestream = concat(
+                mainHeader(true),
+                tilePart(0, 0, 2, new byte[] {0x10}),
+                tilePart(1, 0, 2, new byte[] {0x20, 0x21}),
+                tilePart(0, 1, 2, new byte[] {0x11, 0x12}),
+                tilePart(1, 1, 2, new byte[] {0x22}),
+                marker(Jpeg2000Marker.EOC));
+
+        Jpeg2000ClassicCodestream parsed = parse(codestream);
+        List<Jpeg2000ClassicTilePart> parts = parsed.tileParts();
+
+        assertEquals(4, parts.size());
+        assertTilePart(parts.get(0), 0, 0, 2, new byte[] {0x10});
+        assertTilePart(parts.get(1), 1, 0, 2, new byte[] {0x20, 0x21});
+        assertTilePart(parts.get(2), 0, 1, 2, new byte[] {0x11, 0x12});
+        assertTilePart(parts.get(3), 1, 1, 2, new byte[] {0x22});
+        assertEquals(codestream.length, parsed.logicalLength());
+
+        ByteArrayOutputStream rewritten = new ByteArrayOutputStream();
+        MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(rewritten);
+        new Jpeg2000ClassicCodestreamWriter(
+                new Jpeg2000CodestreamWriter(output, LIMITS)).write(parsed);
+        output.flush();
+        assertArrayEquals(codestream, rewritten.toByteArray());
+    }
+
+    @Test
+    void rejectsOutOfOrderAndInconsistentTilePartDeclarations() throws Exception {
+        byte[] startsAtOne = concat(
+                mainHeader(false),
+                tilePart(0, 1, 2, new byte[0]),
+                marker(Jpeg2000Marker.EOC));
+        byte[] skipsPart = concat(
+                mainHeader(false),
+                tilePart(0, 0, 3, new byte[0]),
+                tilePart(0, 2, 3, new byte[0]),
+                marker(Jpeg2000Marker.EOC));
+        byte[] inconsistentCount = concat(
+                mainHeader(false),
+                tilePart(0, 0, 2, new byte[0]),
+                tilePart(0, 1, 3, new byte[0]),
+                marker(Jpeg2000Marker.EOC));
+
+        assertThrows(Jpeg2000Exception.class, () -> parse(startsAtOne));
+        assertThrows(Jpeg2000Exception.class, () -> parse(skipsPart));
+        assertThrows(Jpeg2000Exception.class, () -> parse(inconsistentCount));
+    }
+
+    @Test
+    void rejectsMissingTilesAndDeclaredTileParts() throws Exception {
+        byte[] missingTile = concat(
+                mainHeader(true),
+                tilePart(0, 0, 1, new byte[0]),
+                marker(Jpeg2000Marker.EOC));
+        byte[] missingPart = concat(
+                mainHeader(false),
+                tilePart(0, 0, 2, new byte[0]),
+                marker(Jpeg2000Marker.EOC));
+
+        assertThrows(Jpeg2000Exception.class, () -> parse(missingTile));
+        assertThrows(Jpeg2000Exception.class, () -> parse(missingPart));
+    }
+
+    @Test
+    void rejectsTilePartLengthThatDoesNotReachItsBoundary() throws Exception {
+        byte[] tooLong = concat(
+                mainHeader(false),
+                tilePartWithLength(0, 0, 1, 18, new byte[] {1}),
+                marker(Jpeg2000Marker.EOC));
+
+        Jpeg2000Exception error = assertThrows(Jpeg2000Exception.class, () -> parse(tooLong));
+        assertTrue(error.getMessage().contains("tile-part"));
+    }
+
     private static Jpeg2000ClassicCodestream parse(byte[] bytes) throws Exception {
         MemoryCacheImageInputStream stream = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes));
         return new Jpeg2000ClassicCodestreamParser(
@@ -132,27 +209,48 @@ class Jpeg2000ClassicCodestreamTest {
 
     private static byte[] baseline(byte[] tileData, boolean trailingPadding) throws Exception {
         byte[] result = concat(
-                marker(Jpeg2000Marker.SOC),
-                segment(Jpeg2000Marker.SIZ, sizePayload()),
-                segment(Jpeg2000Marker.COD, codingPayload()),
-                segment(Jpeg2000Marker.QCD, quantizationPayload()),
-                segment(Jpeg2000Marker.COM, new byte[] {0, 1, 'J', 'a', 'v', 'a', ' ', 'P', '1'}),
-                segment(Jpeg2000Marker.SOT, new byte[] {
-                        0, 0,
-                        0, 0, 0, (byte) (tileData.length + 14),
-                        0, 1
-                }),
-                marker(Jpeg2000Marker.SOD),
-                tileData,
+                mainHeader(false),
+                tilePart(0, 0, 1, tileData),
                 marker(Jpeg2000Marker.EOC));
         return trailingPadding ? concat(result, new byte[] {0}) : result;
     }
 
+    private static byte[] mainHeader(boolean twoTiles) throws Exception {
+        return concat(
+                marker(Jpeg2000Marker.SOC),
+                segment(Jpeg2000Marker.SIZ, sizePayload(twoTiles)),
+                segment(Jpeg2000Marker.COD, codingPayload()),
+                segment(Jpeg2000Marker.QCD, quantizationPayload()),
+                segment(Jpeg2000Marker.COM, new byte[] {0, 1, 'J', 'a', 'v', 'a', ' ', 'P', '1'}));
+    }
+
+    private static byte[] tilePart(
+            int tile, int part, int count, byte[] data) throws Exception {
+        return tilePartWithLength(tile, part, count, data.length + 14, data);
+    }
+
+    private static byte[] tilePartWithLength(
+            int tile, int part, int count, int length, byte[] data) throws Exception {
+        return concat(
+                segment(Jpeg2000Marker.SOT, new byte[] {
+                        (byte) (tile >>> 8), (byte) tile,
+                        (byte) (length >>> 24), (byte) (length >>> 16),
+                        (byte) (length >>> 8), (byte) length,
+                        (byte) part, (byte) count
+                }),
+                marker(Jpeg2000Marker.SOD),
+                data);
+    }
+
     private static byte[] sizePayload() throws Exception {
+        return sizePayload(false);
+    }
+
+    private static byte[] sizePayload(boolean twoTiles) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         DataOutputStream output = new DataOutputStream(bytes);
         output.writeShort(0);
-        output.writeInt(8);
+        output.writeInt(twoTiles ? 16 : 8);
         output.writeInt(8);
         output.writeInt(0);
         output.writeInt(0);
@@ -165,6 +263,18 @@ class Jpeg2000ClassicCodestreamTest {
         output.writeByte(1);
         output.writeByte(1);
         return bytes.toByteArray();
+    }
+
+    private static void assertTilePart(
+            Jpeg2000ClassicTilePart part,
+            int tile,
+            int index,
+            int count,
+            byte[] data) {
+        assertEquals(tile, part.startOfTile().tileIndex());
+        assertEquals(index, part.startOfTile().tilePartIndex());
+        assertEquals(count, part.startOfTile().tilePartCount());
+        assertArrayEquals(data, part.data());
     }
 
     private static byte[] codingPayload() {

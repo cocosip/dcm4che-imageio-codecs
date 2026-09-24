@@ -35,12 +35,12 @@ Snapshot date: 2026-09-24
 | Item | State | Evidence |
 | --- | --- | --- |
 | Classic JPEG 2000 design | `COMPLETE` | `docs/jpeg2000-development-plan.md`, commit `2fd09f2` |
-| Java implementation | `IN_PROGRESS` | P1-P3 complete; P4 packet infrastructure is next. |
+| Java implementation | `IN_PROGRESS` | P1-P4 complete; P5 lossless vertical slice is next. |
 | SPI registration | `NOT_STARTED` | Reader and writer service entries remain commented out. |
 | External interoperability | `NOT_STARTED` | No committed `.90/.91` fixtures or external pixel checks exist. |
-| Active phase | `P4` | Tag trees, packets, progression orders, tiles, and tile-parts |
+| Active phase | `P5` | `.90` lossless codec vertical slice |
 
-Implementation progress is **3 of 9 phases complete**. Design completion is
+Implementation progress is **4 of 9 phases complete**. Design completion is
 tracked separately and is not counted as codec implementation.
 
 ## 4. Delivery Sequence
@@ -50,7 +50,7 @@ tracked separately and is not counted as codec implementation.
 | P1 | Bounded codestream and marker foundation | Design baseline | `COMPLETE` |
 | P2 | Geometry, raster normalization, RCT, and reversible 5/3 DWT | P1 | `COMPLETE` |
 | P3 | MQ coder and EBCOT code-block coding | P1-P2 | `COMPLETE` |
-| P4 | Tag trees, packets, progression orders, tiles, and tile-parts | P1-P3 | `NOT_STARTED` |
+| P4 | Tag trees, packets, progression orders, tiles, and tile-parts | P1-P3 | `COMPLETE` |
 | P5 | `.90` lossless codec vertical slice | P1-P4 | `NOT_STARTED` |
 | P6 | 9/7 DWT, quantization, PCRD rate allocation, and `.91` | P1-P5 | `NOT_STARTED` |
 | P7 | Full required decoder compatibility and resource hardening | P1-P6 | `NOT_STARTED` |
@@ -172,11 +172,14 @@ data cannot over-read or loop without progress.
 
 ### P4: Tag trees, packets, progression orders, tiles, and tile-parts
 
-- Implement classic inclusion and zero-bit-plane tag trees with state scoped to
-  the owning tile-component-resolution-precinct.
-- Implement packet headers, layer contribution state, precinct/code-block
-  traversal, and LRCP/RLCP/RPCL/PCRL/CPRL coordinate iteration.
-- Decode multiple tiles and ordered tile-parts with complete `Isot`, `TPsot`,
+- [x] Implement classic inclusion and zero-bit-plane tag trees with mutable
+  state owned by one classic precinct/subband packet codec.
+- [x] Implement bounded inline packet-header bit I/O, multi-layer code-block
+  contribution state, pass counts, `Lblock`, and contribution lengths.
+- [x] Implement stateless LRCP/RLCP/RPCL/PCRL/CPRL coordinate iteration with
+  checked packet limits.
+- [x] Integrate precinct/code-block traversal with tile geometry.
+- [x] Decode multiple tiles and ordered tile-parts with complete `Isot`, `TPsot`,
   `TNsot`, and `Psot` validation; the writer remains one full-image tile.
 
 **Exit gate:** packet and tile tests prove all five progression orders,
@@ -294,6 +297,11 @@ declared complete and HTJ2K planning move into implementation.
 | 2026-09-24 | P3 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am "-Dsurefire.failIfNoSpecifiedTests=false" "-Dtest=Jpeg2000MqCoderTest,Jpeg2000EbcotTest" test` | 19 P3 tests passed; every recorded pass prefix is bounded, all orientations and accepted styles round-trip, and malformed stuffing, metadata, payload boundaries, and segmentation symbols are rejected. |
 | 2026-09-24 | P3 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am test` | JPEG 2000 module passed 77 tests, 0 failures, 0 errors, 0 skipped. |
 | 2026-09-24 | P3 | Working tree | `./mvnw.cmd test` | Full reactor passed: 328 tests, 0 failures, 0 errors, 0 skipped. P3 exit gate satisfied. |
+| 2026-09-24 | P4 | fo-dicom PureCodecs independent vector | Inline packet `EA201020` | Java packet encoding matches the foreign inclusion, zero-bit-plane, pass-count, `Lblock`, length, and body bytes. |
+| 2026-09-24 | P4 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am test` | JPEG 2000 module passed 90 tests; packet bit I/O, tag trees, multi-layer contributions, malformed lengths, and all five progression orders are covered. |
+| 2026-09-24 | P4 | Working tree | `./mvnw.cmd test` | Full reactor passed 341 tests, 0 failures, 0 errors, 0 skipped. |
+| 2026-09-24 | P4 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am clean test` | JPEG 2000 module passed 99 tests; COD-driven precinct/code-block geometry, spatial progression, multiple tiles, ordered/interleaved tile-parts, and malformed `Isot`/`TPsot`/`TNsot`/`Psot` are covered. P4 exit gate satisfied. |
+| 2026-09-24 | P4 | Working tree | `./mvnw.cmd test` | Full reactor passed 350 tests, 0 failures, 0 errors, 0 skipped. |
 
 For focused Java tests, use this PowerShell command shape and replace the test
 class name with the current phase suite:
@@ -315,6 +323,7 @@ dependencies, runtime fallbacks, or substitutes for the pure-Java implementation
 
 ## 9. Next Work Item
 
-Start P4 with classic tag trees and packet-header state scoped to the owning
-tile-component-resolution-precinct. Keep packet state out of `jpeg2000.common`,
-and do not add ImageIO adapters, SPI activation, or HTJ2K code in this phase.
+Start P5 by assembling the classic `.90` lossless grayscale vertical slice from
+the existing reversible transform, EBCOT/MQ, packet, geometry, and tile-part
+layers. Add syntax-bound ImageIO adapters without enabling service registration,
+and obtain a foreign `.90` decode fixture before declaring P5 complete.

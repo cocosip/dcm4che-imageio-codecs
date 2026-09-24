@@ -9,6 +9,33 @@ public final class Jpeg2000Geometry {
     }
 
     public static Image create(
+            Jpeg2000SizeSegment size,
+            Jpeg2000CodingStyleSegment coding,
+            Jpeg2000Limits limits) throws Jpeg2000Exception {
+        if (size == null) {
+            throw new NullPointerException("size");
+        }
+        if (coding == null) {
+            throw new NullPointerException("coding");
+        }
+        int resolutionCount = coding.decompositionLevels() + 1;
+        int[] precinctWidths = new int[resolutionCount];
+        int[] precinctHeights = new int[resolutionCount];
+        for (int resolution = 0; resolution < resolutionCount; resolution++) {
+            precinctWidths[resolution] = coding.precinctWidth(resolution);
+            precinctHeights[resolution] = coding.precinctHeight(resolution);
+        }
+        return create(
+                size.imageOffsetX(), size.imageOffsetY(),
+                size.referenceGridWidth(), size.referenceGridHeight(),
+                size.tileOffsetX(), size.tileOffsetY(),
+                size.tileWidth(), size.tileHeight(),
+                size.components().size(), coding.decompositionLevels(),
+                coding.codeBlockWidth(), coding.codeBlockHeight(),
+                precinctWidths, precinctHeights, limits);
+    }
+
+    public static Image create(
             long imageX0,
             long imageY0,
             long imageX1,
@@ -22,6 +49,34 @@ public final class Jpeg2000Geometry {
             int codeBlockWidth,
             int codeBlockHeight,
             Jpeg2000Limits limits) throws Jpeg2000Exception {
+        if (decompositionLevels < 0 || decompositionLevels > 32) {
+            throw new Jpeg2000Exception("JPEG 2000 decomposition count is invalid");
+        }
+        int[] precinctWidths = defaultPrecinctSizes(decompositionLevels);
+        int[] precinctHeights = defaultPrecinctSizes(decompositionLevels);
+        return create(
+                imageX0, imageY0, imageX1, imageY1,
+                tileX0, tileY0, tileWidth, tileHeight,
+                componentCount, decompositionLevels, codeBlockWidth, codeBlockHeight,
+                precinctWidths, precinctHeights, limits);
+    }
+
+    public static Image create(
+            long imageX0,
+            long imageY0,
+            long imageX1,
+            long imageY1,
+            long tileX0,
+            long tileY0,
+            long tileWidth,
+            long tileHeight,
+            int componentCount,
+            int decompositionLevels,
+            int codeBlockWidth,
+            int codeBlockHeight,
+            int[] precinctWidths,
+            int[] precinctHeights,
+            Jpeg2000Limits limits) throws Jpeg2000Exception {
         if (limits == null) {
             throw new NullPointerException("limits");
         }
@@ -29,6 +84,7 @@ public final class Jpeg2000Geometry {
                 imageX0, imageY0, imageX1, imageY1,
                 tileX0, tileY0, tileWidth, tileHeight,
                 componentCount, decompositionLevels, codeBlockWidth, codeBlockHeight);
+        validatePrecinctSizes(decompositionLevels, precinctWidths, precinctHeights);
         limits.checkedSampleBufferBytes(
                 imageX1 - imageX0, imageY1 - imageY0, componentCount, Integer.BYTES);
 
@@ -39,6 +95,7 @@ public final class Jpeg2000Geometry {
                 imageX0, imageY0, imageX1, imageY1,
                 tileX0, tileY0, tileWidth, tileHeight,
                 componentCount, decompositionLevels, codeBlockWidth, codeBlockHeight,
+                precinctWidths, precinctHeights,
                 tilesX, tilesY);
         limits.requireCodeBlockCount(codeBlockCount);
 
@@ -53,12 +110,44 @@ public final class Jpeg2000Geometry {
                 for (int component = 0; component < componentCount; component++) {
                     components.add(buildComponent(
                             component, tileBounds, decompositionLevels,
-                            codeBlockWidth, codeBlockHeight));
+                            codeBlockWidth, codeBlockHeight,
+                            precinctWidths, precinctHeights));
                 }
                 tiles.add(new Tile(index++, tileBounds, components));
             }
         }
         return new Image(imageBounds, tiles);
+    }
+
+    private static int[] defaultPrecinctSizes(int decompositionLevels) {
+        int[] result = new int[decompositionLevels + 1];
+        for (int index = 0; index < result.length; index++) {
+            result[index] = 1 << 15;
+        }
+        return result;
+    }
+
+    private static void validatePrecinctSizes(
+            int decompositionLevels,
+            int[] precinctWidths,
+            int[] precinctHeights) throws Jpeg2000Exception {
+        if (precinctWidths == null || precinctHeights == null) {
+            throw new NullPointerException("precinctSizes");
+        }
+        int expected = decompositionLevels + 1;
+        if (precinctWidths.length != expected || precinctHeights.length != expected) {
+            throw new Jpeg2000Exception(
+                    "JPEG 2000 precinct dimensions must be present for every resolution");
+        }
+        for (int resolution = 0; resolution < expected; resolution++) {
+            if (!isPowerOfTwo(precinctWidths[resolution])
+                    || !isPowerOfTwo(precinctHeights[resolution])
+                    || precinctWidths[resolution] > (1 << 15)
+                    || precinctHeights[resolution] > (1 << 15)) {
+                throw new Jpeg2000Exception(
+                        "JPEG 2000 precinct dimensions must be powers of two in 1..32768");
+            }
+        }
     }
 
     private static void validateArguments(
@@ -107,6 +196,8 @@ public final class Jpeg2000Geometry {
             int decompositionLevels,
             int codeBlockWidth,
             int codeBlockHeight,
+            int[] precinctWidths,
+            int[] precinctHeights,
             long tilesX,
             long tilesY) throws Jpeg2000Exception {
         Bounds imageBounds = new Bounds(imageX0, imageY0, imageX1, imageY1);
@@ -116,14 +207,18 @@ public final class Jpeg2000Geometry {
                 Bounds bounds = tileBounds(
                         imageBounds, tileX0, tileY0, tileWidth, tileHeight, tileX, tileY);
                 for (int resolution = 0; resolution <= decompositionLevels; resolution++) {
+                    int blockWidth = effectiveCodeBlockSize(
+                            codeBlockWidth, precinctWidths[resolution], resolution);
+                    int blockHeight = effectiveCodeBlockSize(
+                            codeBlockHeight, precinctHeights[resolution], resolution);
                     for (Bounds band : subbandBounds(bounds, decompositionLevels, resolution)) {
                         if (band.width() == 0 || band.height() == 0) {
                             continue;
                         }
-                        long blocksX = ceilDiv(band.x1(), codeBlockWidth)
-                                - floorDiv(band.x0(), codeBlockWidth);
-                        long blocksY = ceilDiv(band.y1(), codeBlockHeight)
-                                - floorDiv(band.y0(), codeBlockHeight);
+                        long blocksX = ceilDiv(band.x1(), blockWidth)
+                                - floorDiv(band.x0(), blockWidth);
+                        long blocksY = ceilDiv(band.y1(), blockHeight)
+                                - floorDiv(band.y0(), blockHeight);
                         count = checkedAdd(count,
                                 checkedMultiply(blocksX, blocksY, "code-block count"),
                                 "code-block count");
@@ -156,10 +251,16 @@ public final class Jpeg2000Geometry {
             Bounds bounds,
             int levels,
             int codeBlockWidth,
-            int codeBlockHeight) {
+            int codeBlockHeight,
+            int[] precinctWidths,
+            int[] precinctHeights) {
         List<Resolution> resolutions = new ArrayList<Resolution>(levels + 1);
         for (int resolution = 0; resolution <= levels; resolution++) {
             TileComponentData data = componentData(bounds, levels, resolution);
+            int blockWidth = effectiveCodeBlockSize(
+                    codeBlockWidth, precinctWidths[resolution], resolution);
+            int blockHeight = effectiveCodeBlockSize(
+                    codeBlockHeight, precinctHeights[resolution], resolution);
             List<Subband> subbands = new ArrayList<Subband>(data.bands.size());
             for (BandData band : data.bands) {
                 subbands.add(new Subband(
@@ -167,11 +268,86 @@ public final class Jpeg2000Geometry {
                         band.offsetX,
                         band.offsetY,
                         band.bounds,
-                        buildCodeBlocks(band, codeBlockWidth, codeBlockHeight)));
+                        buildCodeBlocks(band, blockWidth, blockHeight)));
             }
-            resolutions.add(new Resolution(resolution, data.bounds, subbands));
+            List<Precinct> precincts = buildPrecincts(
+                    resolution,
+                    levels,
+                    data.bounds,
+                    subbands,
+                    precinctWidths[resolution],
+                    precinctHeights[resolution]);
+            resolutions.add(new Resolution(resolution, data.bounds, subbands, precincts));
         }
         return new Component(index, bounds, resolutions);
+    }
+
+    private static int effectiveCodeBlockSize(
+            int codeBlockSize, int precinctSize, int resolution) {
+        int subbandPrecinctSize = resolution == 0 ? precinctSize : Math.max(1, precinctSize / 2);
+        return Math.min(codeBlockSize, subbandPrecinctSize);
+    }
+
+    private static List<Precinct> buildPrecincts(
+            int resolution,
+            int levels,
+            Bounds resolutionBounds,
+            List<Subband> subbands,
+            int precinctWidth,
+            int precinctHeight) {
+        List<Precinct> precincts = new ArrayList<Precinct>();
+        long firstY = floorDiv(resolutionBounds.y0(), precinctHeight);
+        long lastY = ceilDiv(resolutionBounds.y1(), precinctHeight);
+        long firstX = floorDiv(resolutionBounds.x0(), precinctWidth);
+        long lastX = ceilDiv(resolutionBounds.x1(), precinctWidth);
+        long referenceScale = 1L << (levels - resolution);
+        int index = 0;
+        for (long precinctY = firstY; precinctY < lastY; precinctY++) {
+            for (long precinctX = firstX; precinctX < lastX; precinctX++) {
+                Bounds bounds = new Bounds(
+                        Math.max(resolutionBounds.x0(), precinctX * precinctWidth),
+                        Math.max(resolutionBounds.y0(), precinctY * precinctHeight),
+                        Math.min(resolutionBounds.x1(), (precinctX + 1) * precinctWidth),
+                        Math.min(resolutionBounds.y1(), (precinctY + 1) * precinctHeight));
+                List<PrecinctSubband> precinctSubbands = new ArrayList<PrecinctSubband>(subbands.size());
+                int bandWidth = resolution == 0 ? precinctWidth : Math.max(1, precinctWidth / 2);
+                int bandHeight = resolution == 0 ? precinctHeight : Math.max(1, precinctHeight / 2);
+                Bounds bandCell = new Bounds(
+                        precinctX * bandWidth,
+                        precinctY * bandHeight,
+                        (precinctX + 1) * bandWidth,
+                        (precinctY + 1) * bandHeight);
+                for (Subband subband : subbands) {
+                    List<CodeBlock> blocks = new ArrayList<CodeBlock>();
+                    for (CodeBlock block : subband.codeBlocks()) {
+                        if (containsOrigin(bandCell, block.bounds())) {
+                            blocks.add(block);
+                        }
+                    }
+                    precinctSubbands.add(new PrecinctSubband(
+                            subband.orientation(), intersection(subband.bounds(), bandCell), blocks));
+                }
+                precincts.add(new Precinct(
+                        index++,
+                        bounds,
+                        precinctX * precinctWidth * referenceScale,
+                        precinctY * precinctHeight * referenceScale,
+                        precinctSubbands));
+            }
+        }
+        return precincts;
+    }
+
+    private static boolean containsOrigin(Bounds container, Bounds value) {
+        return value.x0() >= container.x0() && value.x0() < container.x1()
+                && value.y0() >= container.y0() && value.y0() < container.y1();
+    }
+
+    private static Bounds intersection(Bounds left, Bounds right) {
+        long x0 = Math.max(left.x0(), right.x0());
+        long y0 = Math.max(left.y0(), right.y0());
+        return new Bounds(x0, y0, Math.max(x0, Math.min(left.x1(), right.x1())),
+                Math.max(y0, Math.min(left.y1(), right.y1())));
     }
 
     private static List<CodeBlock> buildCodeBlocks(
@@ -253,7 +429,7 @@ public final class Jpeg2000Geometry {
     }
 
     private static boolean isPowerOfTwo(int value) {
-        return (value & (value - 1)) == 0;
+        return value > 0 && (value & (value - 1)) == 0;
     }
 
     private static long floorDiv(long value, long divisor) {
@@ -405,11 +581,17 @@ public final class Jpeg2000Geometry {
         private final int level;
         private final Bounds bounds;
         private final List<Subband> subbands;
+        private final List<Precinct> precincts;
 
-        private Resolution(int level, Bounds bounds, List<Subband> subbands) {
+        private Resolution(
+                int level,
+                Bounds bounds,
+                List<Subband> subbands,
+                List<Precinct> precincts) {
             this.level = level;
             this.bounds = bounds;
             this.subbands = immutable(subbands);
+            this.precincts = immutable(precincts);
         }
 
         public int level() {
@@ -422,6 +604,78 @@ public final class Jpeg2000Geometry {
 
         public List<Subband> subbands() {
             return subbands;
+        }
+
+        public List<Precinct> precincts() {
+            return precincts;
+        }
+    }
+
+    public static final class Precinct {
+        private final int index;
+        private final Bounds bounds;
+        private final long referenceX;
+        private final long referenceY;
+        private final List<PrecinctSubband> subbands;
+
+        private Precinct(
+                int index,
+                Bounds bounds,
+                long referenceX,
+                long referenceY,
+                List<PrecinctSubband> subbands) {
+            this.index = index;
+            this.bounds = bounds;
+            this.referenceX = referenceX;
+            this.referenceY = referenceY;
+            this.subbands = immutable(subbands);
+        }
+
+        public int index() {
+            return index;
+        }
+
+        public Bounds bounds() {
+            return bounds;
+        }
+
+        public long referenceX() {
+            return referenceX;
+        }
+
+        public long referenceY() {
+            return referenceY;
+        }
+
+        public List<PrecinctSubband> subbands() {
+            return subbands;
+        }
+    }
+
+    public static final class PrecinctSubband {
+        private final Orientation orientation;
+        private final Bounds bounds;
+        private final List<CodeBlock> codeBlocks;
+
+        private PrecinctSubband(
+                Orientation orientation,
+                Bounds bounds,
+                List<CodeBlock> codeBlocks) {
+            this.orientation = orientation;
+            this.bounds = bounds;
+            this.codeBlocks = immutable(codeBlocks);
+        }
+
+        public Orientation orientation() {
+            return orientation;
+        }
+
+        public Bounds bounds() {
+            return bounds;
+        }
+
+        public List<CodeBlock> codeBlocks() {
+            return codeBlocks;
         }
     }
 

@@ -130,6 +130,26 @@ public final class Jpeg2000CodingStyleSegment {
         return Jpeg2000Payload.copy(style.precinctSizes);
     }
 
+    public int precinctWidth(int resolution) {
+        return precinctDimension(resolution, false);
+    }
+
+    public int precinctHeight(int resolution) {
+        return precinctDimension(resolution, true);
+    }
+
+    private int precinctDimension(int resolution, boolean height) {
+        if (resolution < 0 || resolution > style.decompositionLevels) {
+            throw new IllegalArgumentException("JPEG 2000 resolution index is outside COD range");
+        }
+        if (style.precinctSizes.length == 0) {
+            return 1 << 15;
+        }
+        int packed = style.precinctSizes[resolution] & 0xff;
+        int exponent = height ? packed >>> 4 : packed & 0x0f;
+        return 1 << exponent;
+    }
+
     public byte[] payload() {
         return Jpeg2000Payload.copy(payload);
     }

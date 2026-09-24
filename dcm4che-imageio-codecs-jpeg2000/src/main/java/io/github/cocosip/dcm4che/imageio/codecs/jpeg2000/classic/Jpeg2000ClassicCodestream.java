@@ -1,7 +1,6 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.classic;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -20,8 +19,7 @@ public final class Jpeg2000ClassicCodestream {
     private final Jpeg2000QuantizationSegment quantization;
     private final List<Jpeg2000ComponentQuantizationSegment> componentQuantizations;
     private final List<Jpeg2000CommentSegment> comments;
-    private final Jpeg2000StartOfTileSegment startOfTile;
-    private final byte[] tileData;
+    private final List<Jpeg2000ClassicTilePart> tileParts;
     private final long logicalLength;
 
     Jpeg2000ClassicCodestream(
@@ -31,8 +29,7 @@ public final class Jpeg2000ClassicCodestream {
             Jpeg2000QuantizationSegment quantization,
             List<Jpeg2000ComponentQuantizationSegment> componentQuantizations,
             List<Jpeg2000CommentSegment> comments,
-            Jpeg2000StartOfTileSegment startOfTile,
-            byte[] tileData,
+            List<Jpeg2000ClassicTilePart> tileParts,
             long logicalLength) {
         this.size = size;
         this.codingStyle = codingStyle;
@@ -40,8 +37,10 @@ public final class Jpeg2000ClassicCodestream {
         this.quantization = quantization;
         this.componentQuantizations = immutableCopy(componentQuantizations);
         this.comments = immutableCopy(comments);
-        this.startOfTile = startOfTile;
-        this.tileData = Arrays.copyOf(tileData, tileData.length);
+        if (tileParts == null || tileParts.isEmpty()) {
+            throw new IllegalArgumentException("JPEG 2000 codestream requires at least one tile-part");
+        }
+        this.tileParts = immutableCopy(tileParts);
         this.logicalLength = logicalLength;
     }
 
@@ -74,11 +73,15 @@ public final class Jpeg2000ClassicCodestream {
     }
 
     public Jpeg2000StartOfTileSegment startOfTile() {
-        return startOfTile;
+        return tileParts.get(0).startOfTile();
     }
 
     public byte[] tileData() {
-        return Arrays.copyOf(tileData, tileData.length);
+        return tileParts.get(0).data();
+    }
+
+    public List<Jpeg2000ClassicTilePart> tileParts() {
+        return tileParts;
     }
 
     public long logicalLength() {

@@ -30,17 +30,17 @@ commit or working-tree reference, verification command, and result in Section
 
 ## 3. Current Snapshot
 
-Snapshot date: 2026-09-24
+Snapshot date: 2026-09-25
 
 | Item | State | Evidence |
 | --- | --- | --- |
 | Classic JPEG 2000 design | `COMPLETE` | `docs/jpeg2000-development-plan.md`, commit `2fd09f2` |
-| Java implementation | `IN_PROGRESS` | P1-P4 complete; P5 lossless vertical slice is next. |
+| Java implementation | `IN_PROGRESS` | P1-P5 complete; P6 irreversible/lossy work is next. |
 | SPI registration | `NOT_STARTED` | Reader and writer service entries remain commented out. |
-| External interoperability | `NOT_STARTED` | No committed `.90/.91` fixtures or external pixel checks exist. |
-| Active phase | `P5` | `.90` lossless codec vertical slice |
+| External interoperability | `IN_PROGRESS` | Synthetic fo-dicom.Codecs `.90` fixture decodes exactly in Java; a separate fo-dicom.Codecs decode of Java `.90` output also matched the source hash. `.91` and release checks remain for P9. |
+| Active phase | `P6` | 9/7 DWT, quantization, rate allocation, and `.91` |
 
-Implementation progress is **4 of 9 phases complete**. Design completion is
+Implementation progress is **5 of 9 phases complete**. Design completion is
 tracked separately and is not counted as codec implementation.
 
 ## 4. Delivery Sequence
@@ -51,7 +51,7 @@ tracked separately and is not counted as codec implementation.
 | P2 | Geometry, raster normalization, RCT, and reversible 5/3 DWT | P1 | `COMPLETE` |
 | P3 | MQ coder and EBCOT code-block coding | P1-P2 | `COMPLETE` |
 | P4 | Tag trees, packets, progression orders, tiles, and tile-parts | P1-P3 | `COMPLETE` |
-| P5 | `.90` lossless codec vertical slice | P1-P4 | `NOT_STARTED` |
+| P5 | `.90` lossless codec vertical slice | P1-P4 | `COMPLETE` |
 | P6 | 9/7 DWT, quantization, PCRD rate allocation, and `.91` | P1-P5 | `NOT_STARTED` |
 | P7 | Full required decoder compatibility and resource hardening | P1-P6 | `NOT_STARTED` |
 | P8 | ImageIO/dcm4che integration and syntax-specific SPI | P5-P7 | `NOT_STARTED` |
@@ -188,14 +188,14 @@ malformed length/index rejection without sharing mutable state with HTJ2K.
 
 ### P5: `.90` lossless codec vertical slice
 
-- Assemble the classic lossless encoder and decoder using five decomposition
+- [x] Assemble the classic lossless encoder and decoder using five decomposition
   levels, 64x64 code blocks, reversible quantization, and a required final
   zero-rate layer.
-- Add syntax-bound lossless reader/writer adapters without enabling service
+- [x] Add syntax-bound lossless reader/writer adapters without enabling service
   registration.
-- Cover grayscale first, then RGB/RCT, signed samples, planar input, Palette
+- [x] Cover grayscale first, then RGB/RCT, signed samples, planar input, Palette
   Color, and one-frame ImageIO stream boundaries.
-- Add at least one foreign `.90` decode fixture before declaring the decoder
+- [x] Add at least one foreign `.90` decode fixture before declaring the decoder
   path complete.
 
 **Exit gate:** exact pixels pass for the design matrix; the Java decoder reads a
@@ -302,6 +302,10 @@ declared complete and HTJ2K planning move into implementation.
 | 2026-09-24 | P4 | Working tree | `./mvnw.cmd test` | Full reactor passed 341 tests, 0 failures, 0 errors, 0 skipped. |
 | 2026-09-24 | P4 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am clean test` | JPEG 2000 module passed 99 tests; COD-driven precinct/code-block geometry, spatial progression, multiple tiles, ordered/interleaved tile-parts, and malformed `Isot`/`TPsot`/`TNsot`/`Psot` are covered. P4 exit gate satisfied. |
 | 2026-09-24 | P4 | Working tree | `./mvnw.cmd test` | Full reactor passed 350 tests, 0 failures, 0 errors, 0 skipped. |
+| 2026-09-25 | P5 | fo-dicom.Codecs 5.16.7 / synthetic fixture | `fo_dicom_codecs_synthetic8_lossless.j2k`; source pixel SHA-256 `EBEFE59C...68C08D7` | Java decoded all 67x65 unsigned 8-bit pixels exactly across eight native quality layers. Fixture generation and hashes are recorded in its README. |
+| 2026-09-25 | P5 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am test` | JPEG 2000 module passed 107 tests: 8/12/16-bit signed/unsigned grayscale and RGB exact round trips, planar RGB, Palette Color, constant/tiny frames, one-frame ImageIO, deterministic five-level markers, and foreign `.90` decode. |
+| 2026-09-25 | P5 | fo-dicom.Codecs 5.16.7 separate process | Decode Java `.90` output SHA-256 `8769E17D...F947CFEB` with `DicomTranscoder` | Foreign decoder returned 4355 pixels with source SHA-256 `EBEFE59C...68C08D7`. Formal bidirectional release evidence remains in P9. |
+| 2026-09-25 | P5 | Working tree | `./mvnw.cmd test` | Full reactor passed 358 tests, 0 failures, 0 errors, 0 skipped. P5 exit gate satisfied. |
 
 For focused Java tests, use this PowerShell command shape and replace the test
 class name with the current phase suite:
@@ -323,7 +327,6 @@ dependencies, runtime fallbacks, or substitutes for the pure-Java implementation
 
 ## 9. Next Work Item
 
-Start P5 by assembling the classic `.90` lossless grayscale vertical slice from
-the existing reversible transform, EBCOT/MQ, packet, geometry, and tile-part
-layers. Add syntax-bound ImageIO adapters without enabling service registration,
-and obtain a foreign `.90` decode fixture before declaring P5 complete.
+Start P6 with irreversible 9/7 lifting and subband quantization, then add PCRD
+rate allocation and the `.91` syntax policy. Keep SPI service registration
+disabled until the P8 integration gate.

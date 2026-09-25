@@ -12,8 +12,8 @@ public final class Jpeg2000MqDecoder {
     private int ct;
 
     public Jpeg2000MqDecoder(byte[] data, int contextCount) throws Jpeg2000Exception {
-        if (data == null || data.length < 2) {
-            throw new Jpeg2000Exception("JPEG 2000 MQ entropy requires at least two bytes");
+        if (data == null || data.length == 0) {
+            throw new Jpeg2000Exception("JPEG 2000 MQ entropy requires at least one byte");
         }
         if (contextCount <= 0) {
             throw new IllegalArgumentException("JPEG 2000 MQ context count must be positive");

@@ -26,6 +26,37 @@ public final class Jpeg2000Raster {
         this.components = copy(components);
     }
 
+    public static Jpeg2000Raster of(
+            int width, int height, int bitsAllocated, int precision, boolean signed,
+            String photometricInterpretation, int[][] components,
+            Jpeg2000Limits limits) throws Jpeg2000Exception {
+        if (components == null || (components.length != 1 && components.length != 3)) {
+            throw new Jpeg2000Exception("JPEG 2000 raster requires one or three components");
+        }
+        if (bitsAllocated != 8 && bitsAllocated != 16 || precision < 1
+                || precision > bitsAllocated) {
+            throw new Jpeg2000Exception("JPEG 2000 raster precision is invalid");
+        }
+        int sampleBytes = limits.checkedSampleBufferBytes(
+                width, height, components.length, Integer.BYTES);
+        int pixels = sampleBytes / Integer.BYTES / components.length;
+        int minimum = signed ? -(1 << (precision - 1)) : 0;
+        int maximum = signed ? (1 << (precision - 1)) - 1
+                : precision == 16 ? 0xffff : (1 << precision) - 1;
+        for (int[] component : components) {
+            if (component == null || component.length != pixels) {
+                throw new Jpeg2000Exception("JPEG 2000 component dimensions do not match raster");
+            }
+            for (int sample : component) {
+                if (sample < minimum || sample > maximum) {
+                    throw new Jpeg2000Exception("JPEG 2000 raster sample exceeds declared precision");
+                }
+            }
+        }
+        return new Jpeg2000Raster(width, height, bitsAllocated, precision, signed,
+                photometricInterpretation, components);
+    }
+
     public int width() {
         return width;
     }

@@ -103,8 +103,8 @@ public final class Jpeg2000EbcotDecoder {
                 passType++;
             }
         }
-        if (previousLength < 2) {
-            throw new Jpeg2000Exception("JPEG 2000 MQ pass boundary requires at least two bytes");
+        if (previousLength < 1) {
+            throw new Jpeg2000Exception("JPEG 2000 MQ pass boundary requires entropy bytes");
         }
         return previousLength;
     }

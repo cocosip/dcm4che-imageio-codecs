@@ -87,7 +87,8 @@ class Jpeg2000MqCoderTest {
         Jpeg2000MqCoder encoder = new Jpeg2000MqCoder(1);
         assertThrows(IllegalArgumentException.class, () -> encoder.encode(0, 1));
         assertThrows(IllegalArgumentException.class, () -> encoder.encode(0, -1));
-        assertThrows(Jpeg2000Exception.class, () -> new Jpeg2000MqDecoder(new byte[] {0}, 1));
+        assertThrows(Jpeg2000Exception.class, () -> new Jpeg2000MqDecoder(new byte[0], 1));
+        new Jpeg2000MqDecoder(new byte[] {0}, 1);
 
         Jpeg2000MqDecoder decoder = new Jpeg2000MqDecoder(new byte[] {0, 0}, 1);
         assertThrows(IllegalArgumentException.class, () -> decoder.decode(-1));

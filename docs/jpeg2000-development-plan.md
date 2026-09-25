@@ -9,9 +9,10 @@ authority for the first implementation phase. HTJ2K is specified separately in
 codestream and DICOM boundary infrastructure described here, but it must not
 reuse the classic entropy-coding entry point.
 
-Implementation status and phase gates are tracked in
-[`jpeg2000-development-progress.md`](jpeg2000-development-progress.md). The
-progress ledger does not change the requirements in this design.
+The classic implementation is the prerequisite for the separate HTJ2K phase.
+Current HTJ2K implementation status and phase gates are tracked in
+[`htj2k-development-progress.md`](htj2k-development-progress.md); that ledger
+does not change the requirements in either design.
 
 The implementation is Java-only. It must not use JNI, P/Invoke, C/C++ source,
 OpenJPEG/OpenJPH binaries, native fallback, or an existing native ImageIO

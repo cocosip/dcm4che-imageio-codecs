@@ -22,14 +22,13 @@ Snapshot date: 2026-09-25
 | --- | --- | --- |
 | HTJ2K design | Available | `docs/htj2k-development-plan.md` defines the scope and release gates. |
 | Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
-| HT implementation and tests | `NOT_STARTED` | No `jpeg2000.htj2k` source, HT-specific ImageIO adapters, HT tests, or HT fixtures are present. |
+| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` now has a syntax-selected structural inspection entry point, bounded header/tile-part validation, and focused synthetic tests. Entropy coding, ImageIO adapters, and foreign fixtures are absent. |
 | HT SPI registration | Disabled | Reader/writer service files contain only commented, generic HTJ2K placeholders; no `.201/.202/.203` providers are registered. |
 | External HT interoperability | `NOT_STARTED` | No committed HT codestream fixtures or foreign-decoder pixel checks are present. |
 
-**Implementation progress: 0 of 6 phases complete.** The active next step is
-H1. The existing classic codec is a prerequisite, not evidence that any HT phase
-has passed. This snapshot is based on repository inspection; no HT test command
-has been run because there is no HT implementation yet.
+**Implementation progress: 0 of 6 phases complete.** H1 is in progress. The
+classic codec remains a prerequisite, not evidence that an HT phase has passed.
+Structural inspection does not decode HT packets or produce an HT codestream.
 
 ## 3. Delivery sequence and exit gates
 
@@ -39,7 +38,7 @@ gate pass.
 
 | Phase | Deliverable | Depends on | State |
 | --- | --- | --- | --- |
-| H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `NOT_STARTED` |
+| H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `IN_PROGRESS` |
 | H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `NOT_STARTED` |
 | H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `NOT_STARTED` |
 | H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `NOT_STARTED` |
@@ -48,17 +47,22 @@ gate pass.
 
 ### H1: Shared foundation and HT boundaries
 
-- [ ] Verify that shared marker framing, immutable geometry, raster normalization,
+- [x] Verify that shared marker framing, immutable geometry, raster normalization,
   RCT/ICT, DWT math, and stateless progression coordinates satisfy HT needs.
 - [ ] Establish the `jpeg2000.htj2k` package and a distinct `Htj2kFrameCodec`
   selected at the transfer-syntax adapter boundary.
-- [ ] Keep mutable classic packet/tag-tree state, MQ/EBCOT, PCRD, and HT entropy
+- [x] Keep mutable classic packet/tag-tree state, MQ/EBCOT, PCRD, and HT entropy
   state in their respective packages; do not dispatch through a classic coder flag.
 - [ ] Define bounded CAP, HT `Rsiz`/profile, tile-part, and marker policy. Reject
   unsupported RGN/PPM/PPT and JP2 wrapping with contextual `IIOException`.
 
 **Exit gate:** focused structural tests verify shared contracts and HT-specific
 profile rejection without changing classic `.90/.91` behavior.
+
+The new parser checks SOC/SIZ, optional CAP, HT COD style, QCD shape, optional
+TLM, ordered SOT/SOD tile-parts, EOC, and DICOM padding. The H1 gate remains
+open: the transfer-syntax ImageIO adapter is not connected, and CAP/Ccap and
+`Rsiz` profile policy still need validation against committed foreign HT vectors.
 
 ### H2: Part 15 block primitives
 
@@ -150,6 +154,7 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | Date | Phase | Reference | Command or artifact | Result |
 | --- | --- | --- | --- | --- |
 | 2026-09-25 | Baseline | Working tree | Repository inspection of HT design, JPEG 2000 sources/tests, fixtures, and SPI service files | Classic foundation exists; HT source, tests, fixtures, and active SPI entries are absent. No HT phase is complete. |
+| 2026-09-25 | H1 | Working tree | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q` | Passed after adding HT structural parser tests; classic and shared tests remain passing. H1 remains in progress pending adapter wiring and foreign CAP/profile vectors. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

@@ -63,6 +63,19 @@ public final class Jpeg2000CodestreamReader {
         return input.readFully(length, context);
     }
 
+    public void skipRaw(long length, String context) throws IOException {
+        if (length < 0 || length > input.remaining()) {
+            throw new Jpeg2000Exception("JPEG 2000 " + context + " exceeds the declared frame at offset "
+                    + input.position());
+        }
+        byte[] buffer = new byte[8192];
+        while (length > 0) {
+            int count = (int) Math.min(length, buffer.length);
+            input.readInto(buffer, count, context);
+            length -= count;
+        }
+    }
+
     public boolean startsWith(byte[] signature) throws IOException {
         if (signature == null) {
             throw new NullPointerException("signature");

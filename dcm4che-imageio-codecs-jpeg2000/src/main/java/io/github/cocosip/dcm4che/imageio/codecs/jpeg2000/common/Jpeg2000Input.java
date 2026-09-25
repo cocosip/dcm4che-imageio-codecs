@@ -61,6 +61,18 @@ public final class Jpeg2000Input {
         return bytes;
     }
 
+    public void readInto(byte[] buffer, int length, String context) throws IOException {
+        if (length < 0 || length > buffer.length) {
+            throw new IllegalArgumentException("length is outside buffer bounds");
+        }
+        requireAvailable(length, context);
+        try {
+            stream.readFully(buffer, 0, length);
+        } catch (IOException error) {
+            throw new Jpeg2000Exception("Truncated JPEG 2000 " + context + " at offset " + position(), error);
+        }
+    }
+
     public byte[] peek(int length, String context) throws IOException {
         long original = stream.getStreamPosition();
         byte[] bytes = readFully(length, context);

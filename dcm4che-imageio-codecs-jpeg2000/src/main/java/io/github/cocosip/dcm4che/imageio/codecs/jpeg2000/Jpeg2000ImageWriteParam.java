@@ -43,6 +43,10 @@ public final class Jpeg2000ImageWriteParam extends ImageWriteParam {
         return irreversible;
     }
 
+    boolean isLosslessSyntax() {
+        return losslessSyntax;
+    }
+
     public void setIrreversible(boolean irreversible) {
         if (losslessSyntax && irreversible) {
             throw new IllegalArgumentException("JPEG 2000 Lossless requires reversible 5/3 coding");

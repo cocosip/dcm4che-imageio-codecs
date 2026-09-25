@@ -30,6 +30,9 @@ public final class Jpeg2000LossyImageWriter extends AbstractDicomImageWriter {
         Jpeg2000ImageWriteParam options = param == null
                 ? new Jpeg2000ImageWriteParam(false)
                 : Jpeg2000LosslessImageWriter.requireOptions(param);
+        if (options.isLosslessSyntax()) {
+            throw new IIOException("JPEG 2000 Lossy writer requires lossy write parameters");
+        }
         if (!options.isIrreversible() && descriptor.getSamples() == 3) {
             throw new IIOException("Reversible three-component .91 conflicts with dcm4che YBR_ICT metadata");
         }

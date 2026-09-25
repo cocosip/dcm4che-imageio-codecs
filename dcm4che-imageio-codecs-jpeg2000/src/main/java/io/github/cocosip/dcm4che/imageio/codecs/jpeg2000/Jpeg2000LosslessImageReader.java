@@ -40,6 +40,10 @@ public class Jpeg2000LosslessImageReader extends AbstractDicomImageReader {
             }
         }
         return Jpeg2000RasterFrames.toImage(descriptor,
-                Jpeg2000LosslessCodec.decode(bytes.toByteArray()), param);
+                Jpeg2000LosslessCodec.decode(bytes.toByteArray(), requireReversibleTransform()), param);
+    }
+
+    protected boolean requireReversibleTransform() {
+        return true;
     }
 }

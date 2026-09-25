@@ -35,6 +35,9 @@ public final class Jpeg2000LosslessImageWriter extends AbstractDicomImageWriter 
         Jpeg2000ImageWriteParam options = param == null
                 ? new Jpeg2000ImageWriteParam(true)
                 : requireOptions(param);
+        if (!options.isLosslessSyntax()) {
+            throw new IIOException("JPEG 2000 Lossless writer requires lossless write parameters");
+        }
         double[] layers = options.resolveLayerRatios(
                 descriptor.getBitsStored(), descriptor.getBitsAllocated());
         Jpeg2000Raster raster = Jpeg2000RasterFrames.fromImage(descriptor, image);

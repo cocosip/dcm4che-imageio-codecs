@@ -15,6 +15,7 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 import javax.imageio.IIOImage;
+import javax.imageio.IIOException;
 import javax.imageio.ImageReadParam;
 import javax.imageio.ImageIO;
 import javax.imageio.stream.MemoryCacheImageInputStream;
@@ -98,6 +99,71 @@ class Jpeg2000LosslessImageIoTest {
         assertEquals("jpeg2000-lossless", new Jpeg2000LosslessImageWriterSpi().getFormatNames()[0]);
         assertTrue(ImageIO.getImageReadersByFormatName("jpeg2000-lossless").hasNext());
         assertTrue(ImageIO.getImageWritersByFormatName("jpeg2000-lossless").hasNext());
+    }
+
+    @Test
+    void rejectsWriteParametersForTheOtherTransferSyntax() throws Exception {
+        ImageDescriptor descriptor = descriptor(8, 8, 8, false, "MONOCHROME2", false);
+        BufferedImage image = DicomImageTypes.createImage(descriptor);
+        IIOImage frame = new IIOImage(image, null, null);
+
+        Jpeg2000LosslessImageWriter lossless = new Jpeg2000LosslessImageWriter(
+                new Jpeg2000LosslessImageWriterSpi());
+        lossless.setOutput(new DescriptorOutputStream(new ByteArrayOutputStream(), descriptor));
+        assertThrows(IIOException.class,
+                () -> lossless.write(null, frame, new Jpeg2000ImageWriteParam(false)));
+
+        Jpeg2000LossyImageWriter lossy = new Jpeg2000LossyImageWriter(
+                new Jpeg2000LossyImageWriterSpi());
+        lossy.setOutput(new DescriptorOutputStream(new ByteArrayOutputStream(), descriptor));
+        assertThrows(IIOException.class,
+                () -> lossy.write(null, frame, new Jpeg2000ImageWriteParam(true)));
+    }
+
+    @Test
+    void losslessReaderRejectsIrreversibleCodestream() throws Exception {
+        ImageDescriptor descriptor = descriptor(16, 16, 8, false, "MONOCHROME2", false);
+        BufferedImage image = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                image.getRaster().setSample(x, y, 0, x * 11 + y * 3);
+            }
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DescriptorOutputStream output = new DescriptorOutputStream(bytes, descriptor);
+        Jpeg2000LossyImageWriter writer = new Jpeg2000LossyImageWriter(
+                new Jpeg2000LossyImageWriterSpi());
+        writer.setOutput(output);
+        writer.write(null, new IIOImage(image, null, null), null);
+        output.flush();
+
+        Jpeg2000LosslessImageReader lossless = new Jpeg2000LosslessImageReader(
+                new Jpeg2000LosslessImageReaderSpi());
+        lossless.setInput(new DescriptorInputStream(bytes.toByteArray(), descriptor));
+        assertThrows(IIOException.class, () -> lossless.read(0));
+
+        Jpeg2000LossyImageReader lossy = new Jpeg2000LossyImageReader(
+                new Jpeg2000LossyImageReaderSpi());
+        lossy.setInput(new DescriptorInputStream(bytes.toByteArray(), descriptor));
+        assertEquals(16, lossy.read(0).getWidth());
+    }
+
+    @Test
+    void readerSpisCheckSocWithoutConsumingInput() throws Exception {
+        ImageDescriptor descriptor = descriptor(2, 2, 8, false, "MONOCHROME2", false);
+        DescriptorInputStream valid = new DescriptorInputStream(
+                new byte[] {(byte) 0xff, 0x4f, 0}, descriptor);
+        DescriptorInputStream invalid = new DescriptorInputStream(
+                new byte[] {(byte) 0xff, (byte) 0xd8, 0}, descriptor);
+        Jpeg2000LosslessImageReaderSpi lossless = new Jpeg2000LosslessImageReaderSpi();
+        Jpeg2000LossyImageReaderSpi lossy = new Jpeg2000LossyImageReaderSpi();
+
+        assertTrue(lossless.canDecodeInput(valid));
+        assertTrue(lossy.canDecodeInput(valid));
+        assertEquals(0, valid.getStreamPosition());
+        assertFalse(lossless.canDecodeInput(invalid));
+        assertFalse(lossy.canDecodeInput(invalid));
+        assertEquals(0, invalid.getStreamPosition());
     }
 
     @Test

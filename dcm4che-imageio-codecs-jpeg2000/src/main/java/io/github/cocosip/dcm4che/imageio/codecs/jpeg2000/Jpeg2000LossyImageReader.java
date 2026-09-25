@@ -7,4 +7,9 @@ public final class Jpeg2000LossyImageReader extends Jpeg2000LosslessImageReader 
     public Jpeg2000LossyImageReader(ImageReaderSpi provider) {
         super(provider);
     }
+
+    @Override
+    protected boolean requireReversibleTransform() {
+        return false;
+    }
 }

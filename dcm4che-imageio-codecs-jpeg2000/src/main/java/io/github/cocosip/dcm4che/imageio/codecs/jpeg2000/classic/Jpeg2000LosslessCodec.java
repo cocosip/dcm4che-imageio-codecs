@@ -239,6 +239,11 @@ public final class Jpeg2000LosslessCodec {
     }
 
     public static Jpeg2000Raster decode(byte[] bytes) throws IOException {
+        return decode(bytes, false);
+    }
+
+    public static Jpeg2000Raster decode(byte[] bytes, boolean requireReversibleTransform)
+            throws IOException {
         if (bytes == null) {
             throw new NullPointerException("bytes");
         }
@@ -280,6 +285,10 @@ public final class Jpeg2000LosslessCodec {
         for (int c = 0; c < count; c++) {
             Jpeg2000CodingStyleSegment style = styles.get(c);
             Jpeg2000QuantizationStyle quantizationStyle = quantizations[c].style();
+            if (requireReversibleTransform && style.transformation() != 1) {
+                throw new Jpeg2000Exception(
+                        "JPEG 2000 Lossless requires reversible coding for component " + c);
+            }
             int expectedSubbands = 1 + 3 * style.decompositionLevels();
             if (quantizationStyle != Jpeg2000QuantizationStyle.SCALAR_DERIVED
                     && quantizations[c].stepSizes().length != expectedSubbands) {
@@ -314,13 +323,16 @@ public final class Jpeg2000LosslessCodec {
         Map<Integer, ByteArrayOutputStream> tileData = new HashMap<Integer, ByteArrayOutputStream>();
         Map<Integer, ByteArrayOutputStream> tileHeaders =
                 new HashMap<Integer, ByteArrayOutputStream>();
+        Map<Integer, List<Integer>> tilePartStarts = new HashMap<Integer, List<Integer>>();
         for (Jpeg2000ClassicTilePart part : codestream.tileParts()) {
             int index = part.startOfTile().tileIndex();
             ByteArrayOutputStream joined = tileData.get(index);
             if (joined == null) {
                 joined = new ByteArrayOutputStream();
                 tileData.put(index, joined);
+                tilePartStarts.put(index, new ArrayList<Integer>());
             }
+            tilePartStarts.get(index).add(joined.size());
             joined.write(part.data());
             ByteArrayOutputStream headers = tileHeaders.get(index);
             if (headers == null) {
@@ -338,16 +350,27 @@ public final class Jpeg2000LosslessCodec {
             byte[] packedHeaders = tileHeaders.get(tile.index()).toByteArray();
             PacketCursor cursor = new PacketCursor(0, 0);
             int packetSequence = 0;
+            List<Integer> partStarts = tilePartStarts.get(tile.index());
+            int nextPart = 1;
             Map<String, BandPacket> packetBands = new HashMap<String, BandPacket>();
             for (Jpeg2000ProgressionIterator.PacketCoordinate coordinate :
                     Jpeg2000ProgressionChange.enumerate(codestream.progressionChanges(),
                             coding.progressionOrder(), coding.qualityLayers(), tile, limits)) {
+                while (nextPart < partStarts.size()
+                        && cursor.bodyPosition == partStarts.get(nextPart)) {
+                    packetSequence = 0;
+                    nextPart++;
+                }
                 Jpeg2000Geometry.Resolution resolution = tile.components()
                         .get(coordinate.component()).resolutions().get(coordinate.resolution());
                 Jpeg2000Geometry.Precinct precinct = resolution.precincts().get(coordinate.precinct());
                 cursor = readPacket(data, packedHeaders, cursor, coordinate, precinct,
                         packetBands, quantizations[coordinate.component()], coding,
                         codestream.regionShift(coordinate.component()), packetSequence++);
+                if (nextPart < partStarts.size()
+                        && cursor.bodyPosition > partStarts.get(nextPart)) {
+                    throw new Jpeg2000Exception("JPEG 2000 packet crosses a tile-part boundary");
+                }
             }
             if (cursor.bodyPosition != data.length
                     || (packedHeaders.length > 0

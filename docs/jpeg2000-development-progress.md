@@ -320,6 +320,7 @@ acceptance policy; TLM lengths and tile references are validated when present.
 | 2026-09-25 | P9 | Working tree | `.\mvnw.cmd clean package` | Full six-module reactor built; 393 tests, 0 failures, 0 errors, 0 skipped. JPEG 2000 module: 142 tests. |
 | 2026-09-25 | P9 | Built JAR | JShell `ImageIO.getImageReadersByFormatName` / `getImageWritersByFormatName` | Both `.90/.91` format names load the expected Java providers; generic `jpeg2000` and `htj2k` writers are absent. |
 | 2026-09-25 | P9 | Working tree | `.\mvnw.cmd test` | Full six-module reactor passed again: 393 tests, 0 failures, 0 errors, 0 skipped. |
+| 2026-09-25 | P9 | `fo-dicom.PureCodecs` regression DICOM fixtures | `Jpeg2000DicomFixtureTest` and `.\mvnw.cmd clean package` | Five `.90/.91` DICOM containers decode through dcm4che: two signed 16-bit lossless frames match independent pixel hashes exactly; signed 16-bit and RGB lossy frames meet fixed native-reference tolerances. Full reactor passed 396 tests, 0 failures; JPEG 2000 module passed 145. Provenance and hashes are in `src/test/resources/jpeg2000/dicom/README.md`. |
 
 For focused Java tests, use this PowerShell command shape and replace the test
 class name with the current phase suite:

@@ -1,0 +1,4 @@
+*.dcm binary
+*.j2k binary
+*.raw binary
+*.gz binary

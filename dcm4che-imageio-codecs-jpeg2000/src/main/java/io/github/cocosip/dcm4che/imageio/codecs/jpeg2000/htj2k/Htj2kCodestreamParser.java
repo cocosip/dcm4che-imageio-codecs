@@ -57,7 +57,7 @@ final class Htj2kCodestreamParser {
         if (size.components().size() != 1 && size.components().size() != 3) {
             throw error(segment, "initial HT profile supports one or three components");
         }
-        if (size.capabilities() != 0 && size.capabilities() != 0x4000) {
+        if (size.capabilities() != 0x4000) {
             throw error(segment, "unsupported HT Rsiz/profile flags 0x"
                     + Integer.toHexString(size.capabilities()));
         }
@@ -68,6 +68,7 @@ final class Htj2kCodestreamParser {
         }
 
         boolean hasCap = false;
+        int ccap15 = -1;
         CodingStyle coding = null;
         boolean hasQcd = false;
         int nextTlmIndex = 0;
@@ -79,7 +80,7 @@ final class Htj2kCodestreamParser {
                     if (hasCap) {
                         throw error(segment, "duplicate CAP");
                     }
-                    parseCap(segment);
+                    ccap15 = parseCap(segment);
                     hasCap = true;
                     break;
                 case Jpeg2000Marker.COD:
@@ -114,6 +115,9 @@ final class Htj2kCodestreamParser {
         }
         if (coding == null || !hasQcd) {
             throw error(segment, "HT main header requires COD and QCD");
+        }
+        if (ccap15 >= 0 && ((ccap15 & 0x20) != 0) == coding.reversible) {
+            throw error(segment, "CAP Ccap15 transform flag disagrees with COD");
         }
 
         Map<Integer, TileState> states = new HashMap<Integer, TileState>();
@@ -197,7 +201,7 @@ final class Htj2kCodestreamParser {
                 coding.mct, partCount, logicalLength);
     }
 
-    private void parseCap(Jpeg2000MarkerSegment segment) throws IIOException {
+    private int parseCap(Jpeg2000MarkerSegment segment) throws IIOException {
         byte[] payload = segment.payload();
         if (payload.length < 6) {
             throw error(segment, "CAP is shorter than Pcap and Ccap15");
@@ -206,6 +210,11 @@ final class Htj2kCodestreamParser {
         if (pcap != HT_CAPABILITY_BIT || payload.length != 4 + 2 * Long.bitCount(pcap)) {
             throw error(segment, "CAP capability bits or Ccap length are unsupported");
         }
+        int ccap15 = unsignedShort(payload, 4);
+        if ((ccap15 & ~0x3f) != 0) {
+            throw error(segment, "CAP Ccap15 has unsupported profile flags");
+        }
+        return ccap15;
     }
 
     private CodingStyle parseCoding(Jpeg2000MarkerSegment segment,

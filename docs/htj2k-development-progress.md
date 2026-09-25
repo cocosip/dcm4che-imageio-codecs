@@ -22,7 +22,7 @@ Snapshot date: 2026-09-25
 | --- | --- | --- |
 | HTJ2K design | Available | `docs/htj2k-development-plan.md` defines the scope and release gates. |
 | Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
-| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` now has a syntax-selected structural inspection entry point, bounded header/tile-part validation, and focused synthetic tests. Entropy coding, ImageIO adapters, and foreign fixtures are absent. |
+| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has structural inspection, bounded MEL/VLC/MagSgn primitives, and a one-pass cleanup block encoder/decoder checked against OpenJPH bytes. HT packets, full-frame coding, and ImageIO adapters are absent. |
 | HT SPI registration | Disabled | Reader/writer service files contain only commented, generic HTJ2K placeholders; no `.201/.202/.203` providers are registered. |
 | External HT interoperability | `NOT_STARTED` | No committed HT codestream fixtures or foreign-decoder pixel checks are present. |
 
@@ -39,7 +39,7 @@ gate pass.
 | Phase | Deliverable | Depends on | State |
 | --- | --- | --- | --- |
 | H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `IN_PROGRESS` |
-| H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `NOT_STARTED` |
+| H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `IN_PROGRESS` |
 | H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `NOT_STARTED` |
 | H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `NOT_STARTED` |
 | H5 | `.203` irreversible path and all-syntax external interoperability | H4 | `NOT_STARTED` |
@@ -66,14 +66,22 @@ open: the transfer-syntax ImageIO adapter is not connected, and CAP/Ccap and
 
 ### H2: Part 15 block primitives
 
-- [ ] Implement bounded bit views and independently testable MEL, VLC, MagSgn,
-  cleanup/refinement, and code-block state.
-- [ ] Test empty/all-zero/one-symbol blocks, maximum magnitude/sign values,
-  stuffing, termination, and truncated segments against fixed HT vectors.
+- [x] Implement bounded bit views and independently testable MEL, VLC, MagSgn,
+  one-pass cleanup, and code-block state.
+- [ ] Implement and validate cleanup plus refinement passes required by foreign
+  codestreams.
+- [x] Test all-zero/one-symbol blocks, large magnitude/sign values, stuffing,
+  termination, and malformed bounds against fixed HT block vectors.
 - [ ] Report the first invalid bit position without over-read or non-progress.
 
 **Exit gate:** fixed external or standard-backed vectors pass in both directions;
 malformed and truncated segments fail within configured limits.
+
+The fixed cleanup vectors were generated with the local OpenJPH block encoder in
+`D:/dotnet-source-code/fo-dicom.Codecs/Native/Common/OpenJPH` (fo-dicom.Codecs
+revision `da3fe114fc918756285ce1f25be265e7b74360a3`). The Java cleanup
+encoder matches those bytes and its decoder recovers the exact coefficients.
+These block vectors do not establish packet or full-codestream interoperability.
 
 ### H3: `.201` lossless vertical slice
 
@@ -155,6 +163,7 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | --- | --- | --- | --- | --- |
 | 2026-09-25 | Baseline | Working tree | Repository inspection of HT design, JPEG 2000 sources/tests, fixtures, and SPI service files | Classic foundation exists; HT source, tests, fixtures, and active SPI entries are absent. No HT phase is complete. |
 | 2026-09-25 | H1 | Working tree | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q` | Passed after adding HT structural parser tests; classic and shared tests remain passing. H1 remains in progress pending adapter wiring and foreign CAP/profile vectors. |
+| 2026-09-25 | H2 | Working tree | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kCleanupPassTest` vectors from local OpenJPH | 173 tests passed. MEL/VLC/MagSgn primitives and cleanup block encode/decode match recorded OpenJPH bytes and coefficients; refinement and full-frame interoperability remain open. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

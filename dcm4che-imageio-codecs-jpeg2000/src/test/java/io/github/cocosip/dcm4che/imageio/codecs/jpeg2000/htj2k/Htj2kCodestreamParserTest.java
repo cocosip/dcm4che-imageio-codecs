@@ -64,13 +64,21 @@ class Htj2kCodestreamParserTest {
 
     @Test
     void acceptsOptionalCapAndTlmOmission() throws Exception {
-        byte[] frame = frame(0, true, 2, 0x40, 14, 14, false, false);
+        byte[] frame = frame(0x4000, true, 2, 0x40, 14, 14, false, false);
         int capOffset = 45;
         byte[] noCap = new byte[frame.length - 10];
         System.arraycopy(frame, 0, noCap, 0, capOffset);
         System.arraycopy(frame, capOffset + 10, noCap, capOffset,
                 frame.length - capOffset - 10);
         assertEquals(1, inspect(Htj2kFrameCodec.LOSSLESS_UID, noCap).tilePartCount());
+    }
+
+    @Test
+    void checksCapTransformAgainstCod() throws Exception {
+        byte[] wrongCap = frame(0x4000, true, 2, 0x40, 14, 14, false, false);
+        wrongCap[54] = 0x20;
+        assertRejected(Htj2kFrameCodec.LOSSLESS_UID, wrongCap,
+                "CAP Ccap15 transform flag disagrees with COD");
     }
 
     @Test
@@ -139,7 +147,8 @@ class Htj2kCodestreamParserTest {
         siz[37] = 1;
         siz[38] = 1;
         segment(output, Jpeg2000Marker.SIZ, siz);
-        segment(output, Jpeg2000Marker.CAP, new byte[] {0, 2, 0, 0, 0, 0});
+        segment(output, Jpeg2000Marker.CAP,
+                new byte[] {0, 2, 0, 0, 0, (byte) (reversible ? 0 : 0x20)});
         for (byte[] extra : extraMarkers) {
             output.write(extra);
         }

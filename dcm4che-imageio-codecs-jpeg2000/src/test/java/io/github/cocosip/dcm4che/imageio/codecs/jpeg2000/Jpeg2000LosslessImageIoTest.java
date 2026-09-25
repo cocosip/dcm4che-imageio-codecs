@@ -2,12 +2,15 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.awt.Rectangle;
+import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
@@ -25,6 +28,7 @@ import org.dcm4che3.imageio.codec.ImageDescriptor;
 import org.junit.jupiter.api.Test;
 
 import io.github.cocosip.dcm4che.imageio.codecs.core.image.DicomImageTypes;
+import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.classic.Jpeg2000LosslessCodec;
 
 class Jpeg2000LosslessImageIoTest {
     @Test
@@ -89,11 +93,189 @@ class Jpeg2000LosslessImageIoTest {
     }
 
     @Test
-    void keepsSyntaxSpecificProvidersUnregisteredUntilIntegrationGate() {
+    void discoversSyntaxSpecificProviders() {
         assertEquals("jpeg2000-lossless", new Jpeg2000LosslessImageReaderSpi().getFormatNames()[0]);
         assertEquals("jpeg2000-lossless", new Jpeg2000LosslessImageWriterSpi().getFormatNames()[0]);
-        assertFalse(ImageIO.getImageReadersByFormatName("jpeg2000-lossless").hasNext());
-        assertFalse(ImageIO.getImageWritersByFormatName("jpeg2000-lossless").hasNext());
+        assertTrue(ImageIO.getImageReadersByFormatName("jpeg2000-lossless").hasNext());
+        assertTrue(ImageIO.getImageWritersByFormatName("jpeg2000-lossless").hasNext());
+    }
+
+    @Test
+    void normalizesYbrFull422ImageIoInput() throws Exception {
+        Attributes attributes = new Attributes();
+        attributes.setInt(Tag.Rows, VR.US, 2);
+        attributes.setInt(Tag.Columns, VR.US, 2);
+        attributes.setInt(Tag.SamplesPerPixel, VR.US, 3);
+        attributes.setInt(Tag.PlanarConfiguration, VR.US, 0);
+        attributes.setInt(Tag.BitsAllocated, VR.US, 8);
+        attributes.setInt(Tag.BitsStored, VR.US, 8);
+        attributes.setInt(Tag.PixelRepresentation, VR.US, 0);
+        attributes.setString(Tag.PhotometricInterpretation, VR.CS, "YBR_FULL_422");
+        ImageDescriptor descriptor = new ImageDescriptor(attributes);
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        int[] luminance = {100, 110, 120, 130};
+        for (int i = 0; i < luminance.length; i++) {
+            int x = i % 2;
+            int y = i / 2;
+            source.getRaster().setSample(x, y, 0, luminance[i]);
+            source.getRaster().setSample(x, y, 1, 128);
+            source.getRaster().setSample(x, y, 2, 128);
+        }
+        Jpeg2000LosslessImageReader reader = new Jpeg2000LosslessImageReader(
+                new Jpeg2000LosslessImageReaderSpi());
+        reader.setInput(new DescriptorInputStream(encode(descriptor, source), descriptor));
+        BufferedImage decoded = reader.read(0);
+        for (int i = 0; i < luminance.length; i++) {
+            for (int c = 0; c < 3; c++) {
+                assertEquals(luminance[i], decoded.getRaster().getSample(i % 2, i / 2, c));
+            }
+        }
+    }
+
+    @Test
+    void reversibleLossySyntaxIsExactForMonochromeAndRejectsRgb() throws Exception {
+        ImageDescriptor monochrome = descriptor(35, 37, 8, false, "MONOCHROME2", false);
+        BufferedImage source = DicomImageTypes.createImage(monochrome);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                source.getRaster().setSample(x, y, 0, (x * 17 + y * 11) & 255);
+            }
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DescriptorOutputStream output = new DescriptorOutputStream(bytes, monochrome);
+        Jpeg2000LossyImageWriter writer = new Jpeg2000LossyImageWriter(
+                new Jpeg2000LossyImageWriterSpi());
+        Jpeg2000ImageWriteParam options = (Jpeg2000ImageWriteParam) writer.getDefaultWriteParam();
+        options.setIrreversible(false);
+        options.setRate(0);
+        writer.setOutput(output);
+        writer.write(null, new IIOImage(source, null, null), options);
+        output.flush();
+        Jpeg2000LossyImageReader reader = new Jpeg2000LossyImageReader(
+                new Jpeg2000LossyImageReaderSpi());
+        reader.setInput(new DescriptorInputStream(bytes.toByteArray(), monochrome));
+        BufferedImage decoded = reader.read(0);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                assertEquals(source.getRaster().getSample(x, y, 0),
+                        decoded.getRaster().getSample(x, y, 0));
+            }
+        }
+
+        ImageDescriptor rgb = descriptor(2, 2, 8, false, "RGB", true);
+        writer.setOutput(new DescriptorOutputStream(new ByteArrayOutputStream(), rgb));
+        BufferedImage rgbImage = DicomImageTypes.createImage(rgb);
+        assertThrows(javax.imageio.IIOException.class,
+                () -> writer.write(null, new IIOImage(rgbImage, null, null), options));
+    }
+
+    @Test
+    void rejectsOversizedDestinationAndRecoversOnNextInput() throws Exception {
+        ImageDescriptor descriptor = descriptor(35, 37, 8, false, "MONOCHROME2", false);
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        byte[] encoded = encode(descriptor, source);
+        Jpeg2000LosslessImageReader reader = new Jpeg2000LosslessImageReader(
+                new Jpeg2000LosslessImageReaderSpi());
+        reader.setInput(new DescriptorInputStream(encoded, descriptor));
+        ImageReadParam param = reader.getDefaultReadParam();
+        param.setDestinationOffset(new Point(Integer.MAX_VALUE, 0));
+        assertThrows(javax.imageio.IIOException.class, () -> reader.read(0, param));
+        reader.setInput(new DescriptorInputStream(encoded, descriptor));
+        assertEquals(37, reader.read(0).getWidth());
+    }
+
+    @Test
+    void signedAsUnsignedOptionPreservesSixteenBitCodes() throws Exception {
+        ImageDescriptor descriptor = descriptor(35, 37, 16, true, "MONOCHROME2", false);
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                source.getRaster().setSample(x, y, 0, (x * 253 + y * 317) - 32768);
+            }
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DescriptorOutputStream output = new DescriptorOutputStream(bytes, descriptor);
+        Jpeg2000LosslessImageWriter writer = new Jpeg2000LosslessImageWriter(
+                new Jpeg2000LosslessImageWriterSpi());
+        Jpeg2000ImageWriteParam options = (Jpeg2000ImageWriteParam) writer.getDefaultWriteParam();
+        options.setEncodeSignedAsUnsigned(true);
+        writer.setOutput(output);
+        writer.write(null, new IIOImage(source, null, null), options);
+        output.flush();
+        byte[] encoded = bytes.toByteArray();
+        assertFalse(Jpeg2000LosslessCodec.decode(encoded).signed());
+        Jpeg2000LosslessImageReader reader = new Jpeg2000LosslessImageReader(
+                new Jpeg2000LosslessImageReaderSpi());
+        reader.setInput(new DescriptorInputStream(encoded, descriptor));
+        BufferedImage decoded = reader.read(0);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                assertEquals(source.getRaster().getSample(x, y, 0),
+                        decoded.getRaster().getSample(x, y, 0));
+            }
+        }
+    }
+
+    @Test
+    void readsFrameAcrossShortInputChunks() throws Exception {
+        ImageDescriptor descriptor = descriptor(35, 37, 8, false, "MONOCHROME2", false);
+        BufferedImage source = DicomImageTypes.createImage(descriptor);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                source.getRaster().setSample(x, y, 0, x + y);
+            }
+        }
+        byte[] encoded = encode(descriptor, source);
+        InputStream chunks = new ByteArrayInputStream(encoded) {
+            @Override
+            public synchronized int read(byte[] bytes, int offset, int length) {
+                return super.read(bytes, offset, Math.min(length, 3));
+            }
+        };
+        Jpeg2000LosslessImageReader reader = new Jpeg2000LosslessImageReader(
+                new Jpeg2000LosslessImageReaderSpi());
+        reader.setInput(new DescriptorInputStream(chunks, encoded, descriptor));
+        BufferedImage decoded = reader.read(0);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                assertEquals(x + y, decoded.getRaster().getSample(x, y, 0));
+            }
+        }
+    }
+
+    @Test
+    void decodesPartial422DescriptorToRgbRaster() throws Exception {
+        ImageDescriptor rgb = descriptor(35, 37, 8, false, "RGB", true);
+        BufferedImage source = DicomImageTypes.createImage(rgb);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                for (int c = 0; c < 3; c++) {
+                    source.getRaster().setSample(x, y, c, x + y + c * 20);
+                }
+            }
+        }
+        Attributes metadata = new Attributes();
+        metadata.setInt(Tag.Rows, VR.US, 35);
+        metadata.setInt(Tag.Columns, VR.US, 37);
+        metadata.setInt(Tag.SamplesPerPixel, VR.US, 3);
+        metadata.setInt(Tag.PlanarConfiguration, VR.US, 0);
+        metadata.setInt(Tag.BitsAllocated, VR.US, 8);
+        metadata.setInt(Tag.BitsStored, VR.US, 8);
+        metadata.setInt(Tag.PixelRepresentation, VR.US, 0);
+        metadata.setString(Tag.PhotometricInterpretation, VR.CS, "YBR_PARTIAL_422");
+        ImageDescriptor partial = new ImageDescriptor(metadata);
+        Jpeg2000LosslessImageReader reader = new Jpeg2000LosslessImageReader(
+                new Jpeg2000LosslessImageReaderSpi());
+        reader.setInput(new DescriptorInputStream(encode(rgb, source), partial));
+        BufferedImage decoded = reader.read(0);
+        for (int y = 0; y < 35; y++) {
+            for (int x = 0; x < 37; x++) {
+                for (int c = 0; c < 3; c++) {
+                    assertEquals(x + y + c * 20,
+                            decoded.getRaster().getSample(x, y, c));
+                }
+            }
+        }
     }
 
     private static byte[] encode(ImageDescriptor descriptor, BufferedImage source) throws Exception {
@@ -129,7 +311,11 @@ class Jpeg2000LosslessImageIoTest {
         private final byte[] bytes;
 
         DescriptorInputStream(byte[] bytes, ImageDescriptor descriptor) {
-            super(new ByteArrayInputStream(bytes));
+            this(new ByteArrayInputStream(bytes), bytes, descriptor);
+        }
+
+        DescriptorInputStream(InputStream input, byte[] bytes, ImageDescriptor descriptor) {
+            super(input);
             this.descriptor = descriptor;
             this.bytes = bytes;
         }

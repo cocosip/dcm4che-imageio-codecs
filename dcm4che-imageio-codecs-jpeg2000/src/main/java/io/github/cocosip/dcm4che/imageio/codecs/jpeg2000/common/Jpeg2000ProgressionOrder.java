@@ -17,7 +17,7 @@ public enum Jpeg2000ProgressionOrder {
         return code;
     }
 
-    static Jpeg2000ProgressionOrder fromCode(int code) throws Jpeg2000Exception {
+    public static Jpeg2000ProgressionOrder fromCode(int code) throws Jpeg2000Exception {
         for (Jpeg2000ProgressionOrder value : values()) {
             if (value.code == code) {
                 return value;

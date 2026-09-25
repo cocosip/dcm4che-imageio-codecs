@@ -200,6 +200,26 @@ class Jpeg2000ClassicCodestreamTest {
         assertTrue(error.getMessage().contains("tile-part"));
     }
 
+    @Test
+    void validatesTlmAgainstSotAndRejectsUnsupportedPacketLengthMarkers() throws Exception {
+        byte[] tlm = segment(Jpeg2000Marker.TLM,
+                new byte[] {0, 0x60, 0, 0, 0, 0, 0, 17});
+        byte[] valid = concat(mainHeader(false), tlm,
+                tilePart(0, 0, 1, new byte[] {1, 2, 3}), marker(Jpeg2000Marker.EOC));
+        assertEquals(1, parse(valid).tileParts().size());
+
+        byte[] wrongLength = tlm.clone();
+        wrongLength[wrongLength.length - 1] = 18;
+        assertThrows(Jpeg2000Exception.class, () -> parse(concat(mainHeader(false), wrongLength,
+                tilePart(0, 0, 1, new byte[] {1, 2, 3}), marker(Jpeg2000Marker.EOC))));
+
+        for (int marker : new int[] {Jpeg2000Marker.PLM, Jpeg2000Marker.PLT}) {
+            byte[] stream = concat(mainHeader(false), segment(marker, new byte[] {0}),
+                    tilePart(0, 0, 1, new byte[] {1}), marker(Jpeg2000Marker.EOC));
+            assertThrows(Jpeg2000Exception.class, () -> parse(stream));
+        }
+    }
+
     private static Jpeg2000ClassicCodestream parse(byte[] bytes) throws Exception {
         MemoryCacheImageInputStream stream = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes));
         return new Jpeg2000ClassicCodestreamParser(

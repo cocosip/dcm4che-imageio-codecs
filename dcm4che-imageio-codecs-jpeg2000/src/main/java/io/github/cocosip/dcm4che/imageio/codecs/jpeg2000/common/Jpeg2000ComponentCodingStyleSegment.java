@@ -40,4 +40,20 @@ public final class Jpeg2000ComponentCodingStyleSegment {
     public byte[] payload() {
         return Jpeg2000Payload.copy(payload);
     }
+
+    public Jpeg2000CodingStyleSegment resolve(Jpeg2000CodingStyleSegment defaultStyle,
+            Jpeg2000SizeSegment size, Jpeg2000Limits limits) throws Jpeg2000Exception {
+        if (defaultStyle == null || size == null || limits == null) {
+            throw new NullPointerException("coding style resolution");
+        }
+        int indexBytes = size.components().size() < 257 ? 1 : 2;
+        byte[] base = defaultStyle.payload();
+        byte[] resolved = new byte[5 + payload.length - indexBytes - 1];
+        System.arraycopy(base, 0, resolved, 0, 5);
+        resolved[0] = (byte) ((base[0] & 0x06) | (payload[indexBytes] & 1));
+        System.arraycopy(payload, indexBytes + 1, resolved, 5,
+                payload.length - indexBytes - 1);
+        return Jpeg2000CodingStyleSegment.parse(
+                new Jpeg2000MarkerSegment(Jpeg2000Marker.COD, 0, resolved), limits);
+    }
 }

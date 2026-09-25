@@ -8,6 +8,68 @@ public final class Jpeg2000Geometry {
     private Jpeg2000Geometry() {
     }
 
+    public static Image create(Jpeg2000SizeSegment size,
+            List<Jpeg2000CodingStyleSegment> componentStyles,
+            Jpeg2000Limits limits) throws Jpeg2000Exception {
+        if (size == null || componentStyles == null || limits == null) {
+            throw new NullPointerException("component geometry");
+        }
+        if (componentStyles.size() != size.components().size()) {
+            throw new Jpeg2000Exception("JPEG 2000 component style count differs from SIZ");
+        }
+        limits.checkedSampleBufferBytes(size.referenceGridWidth() - size.imageOffsetX(),
+                size.referenceGridHeight() - size.imageOffsetY(),
+                componentStyles.size(), Integer.BYTES);
+        long totalBlocks = 0;
+        for (Jpeg2000CodingStyleSegment style : componentStyles) {
+            int[] precinctWidths = new int[style.decompositionLevels() + 1];
+            int[] precinctHeights = new int[precinctWidths.length];
+            for (int r = 0; r < precinctWidths.length; r++) {
+                precinctWidths[r] = style.precinctWidth(r);
+                precinctHeights[r] = style.precinctHeight(r);
+            }
+            long tilesX = ceilDiv(size.referenceGridWidth() - size.tileOffsetX(),
+                    size.tileWidth());
+            long tilesY = ceilDiv(size.referenceGridHeight() - size.tileOffsetY(),
+                    size.tileHeight());
+            totalBlocks = checkedAdd(totalBlocks, countCodeBlocks(
+                    size.imageOffsetX(), size.imageOffsetY(),
+                    size.referenceGridWidth(), size.referenceGridHeight(),
+                    size.tileOffsetX(), size.tileOffsetY(),
+                    size.tileWidth(), size.tileHeight(), 1,
+                    style.decompositionLevels(), style.codeBlockWidth(),
+                    style.codeBlockHeight(), precinctWidths, precinctHeights,
+                    tilesX, tilesY), "component code-block count");
+        }
+        limits.requireCodeBlockCount(totalBlocks);
+        List<Image> singleComponents = new ArrayList<Image>(componentStyles.size());
+        for (Jpeg2000CodingStyleSegment style : componentStyles) {
+            int[] precinctWidths = new int[style.decompositionLevels() + 1];
+            int[] precinctHeights = new int[precinctWidths.length];
+            for (int r = 0; r < precinctWidths.length; r++) {
+                precinctWidths[r] = style.precinctWidth(r);
+                precinctHeights[r] = style.precinctHeight(r);
+            }
+            singleComponents.add(create(size.imageOffsetX(), size.imageOffsetY(),
+                    size.referenceGridWidth(), size.referenceGridHeight(),
+                    size.tileOffsetX(), size.tileOffsetY(),
+                    size.tileWidth(), size.tileHeight(), 1,
+                    style.decompositionLevels(), style.codeBlockWidth(),
+                    style.codeBlockHeight(), precinctWidths, precinctHeights, limits));
+        }
+        Image first = singleComponents.get(0);
+        List<Tile> tiles = new ArrayList<Tile>(first.tiles().size());
+        for (int i = 0; i < first.tiles().size(); i++) {
+            List<Component> components = new ArrayList<Component>(componentStyles.size());
+            for (int c = 0; c < componentStyles.size(); c++) {
+                Component part = singleComponents.get(c).tiles().get(i).components().get(0);
+                components.add(new Component(c, part.bounds(), part.resolutions()));
+            }
+            tiles.add(new Tile(i, first.tiles().get(i).bounds(), components));
+        }
+        return new Image(first.bounds(), tiles);
+    }
+
     public static Image create(
             Jpeg2000SizeSegment size,
             Jpeg2000CodingStyleSegment coding,

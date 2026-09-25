@@ -8,8 +8,14 @@ import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000StartOfT
 public final class Jpeg2000ClassicTilePart {
     private final Jpeg2000StartOfTileSegment startOfTile;
     private final byte[] data;
+    private final byte[] packedHeaders;
 
     Jpeg2000ClassicTilePart(Jpeg2000StartOfTileSegment startOfTile, byte[] data) {
+        this(startOfTile, data, new byte[0]);
+    }
+
+    Jpeg2000ClassicTilePart(Jpeg2000StartOfTileSegment startOfTile,
+            byte[] data, byte[] packedHeaders) {
         if (startOfTile == null) {
             throw new NullPointerException("startOfTile");
         }
@@ -18,6 +24,7 @@ public final class Jpeg2000ClassicTilePart {
         }
         this.startOfTile = startOfTile;
         this.data = Arrays.copyOf(data, data.length);
+        this.packedHeaders = Arrays.copyOf(packedHeaders, packedHeaders.length);
     }
 
     public Jpeg2000StartOfTileSegment startOfTile() {
@@ -26,5 +33,9 @@ public final class Jpeg2000ClassicTilePart {
 
     public byte[] data() {
         return Arrays.copyOf(data, data.length);
+    }
+
+    public byte[] packedHeaders() {
+        return Arrays.copyOf(packedHeaders, packedHeaders.length);
     }
 }

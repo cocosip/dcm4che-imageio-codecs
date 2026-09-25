@@ -1,5 +1,6 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.classic;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -65,9 +66,17 @@ public final class Jpeg2000ClassicCodestreamParser {
                 new ArrayList<Jpeg2000ComponentCodingStyleSegment>();
         List<Jpeg2000ComponentQuantizationSegment> componentQuantization =
                 new ArrayList<Jpeg2000ComponentQuantizationSegment>();
+        List<Jpeg2000MarkerSegment> deferredQcc = new ArrayList<Jpeg2000MarkerSegment>();
         List<Jpeg2000CommentSegment> comments = new ArrayList<Jpeg2000CommentSegment>();
+        List<Jpeg2000ProgressionChange> progressionChanges =
+                new ArrayList<Jpeg2000ProgressionChange>();
+        ByteArrayOutputStream ppm = new ByteArrayOutputStream();
+        int nextPpmIndex = 0;
+        int nextTlmIndex = 0;
+        List<TileLength> tileLengths = new ArrayList<TileLength>();
         Set<Integer> codingComponents = new HashSet<Integer>();
         Set<Integer> quantizationComponents = new HashSet<Integer>();
+        Map<Integer, Integer> regionShifts = new HashMap<Integer, Integer>();
         Jpeg2000MarkerSegment startSegment = null;
 
         while (startSegment == null) {
@@ -106,15 +115,73 @@ public final class Jpeg2000ClassicCodestreamParser {
                 if (coding == null) {
                     throw markerError(segment, "QCC marker requires COD first");
                 }
-                Jpeg2000ComponentQuantizationSegment parsed =
-                        Jpeg2000ComponentQuantizationSegment.parse(segment, size, coding);
-                if (!quantizationComponents.add(parsed.componentIndex())) {
-                    throw markerError(segment, "duplicate QCC component override");
+                deferredQcc.add(segment);
+            } else if (marker == Jpeg2000Marker.RGN) {
+                requireSize(size, segment);
+                byte[] payload = segment.payload();
+                int indexBytes = size.components().size() < 257 ? 1 : 2;
+                if (payload.length != indexBytes + 2) {
+                    throw markerError(segment, "RGN payload length is invalid");
                 }
-                componentQuantization.add(parsed);
+                int component = indexBytes == 1 ? payload[0] & 0xff
+                        : ((payload[0] & 0xff) << 8) | (payload[1] & 0xff);
+                if (component >= size.components().size() || (payload[indexBytes] & 0xff) != 0
+                        || (payload[indexBytes + 1] & 0xff) > 30
+                        || regionShifts.put(component, payload[indexBytes + 1] & 0xff) != null) {
+                    throw markerError(segment, "RGN Maxshift component, style, shift, or duplicate is invalid");
+                }
             } else if (marker == Jpeg2000Marker.COM) {
                 requireSize(size, segment);
                 comments.add(Jpeg2000CommentSegment.parse(segment));
+            } else if (marker == Jpeg2000Marker.POC) {
+                requireSize(size, segment);
+                if (coding == null) {
+                    throw markerError(segment, "POC marker requires COD first");
+                }
+                progressionChanges.addAll(Jpeg2000ProgressionChange.parse(segment.payload(),
+                        size.components().size(), coding.decompositionLevels() + 1,
+                        coding.qualityLayers()));
+            } else if (marker == Jpeg2000Marker.PPM) {
+                requireSize(size, segment);
+                byte[] payload = segment.payload();
+                if (payload.length < 2 || (payload[0] & 0xff) != nextPpmIndex++) {
+                    throw markerError(segment, "PPM segment index or payload is invalid");
+                }
+                ppm.write(payload, 1, payload.length - 1);
+                limits.requireFrameLength(ppm.size());
+            } else if (marker == Jpeg2000Marker.TLM) {
+                requireSize(size, segment);
+                if ((segment.payload().length < 2)
+                        || (segment.payload()[0] & 0xff) != nextTlmIndex++) {
+                    throw markerError(segment, "TLM segment index or payload is invalid");
+                }
+                byte[] payload = segment.payload();
+                int stlm = payload[1] & 0xff;
+                int indexBytes = (stlm >>> 4) & 3;
+                int lengthBytes = ((stlm >>> 6) & 1) == 0 ? 2 : 4;
+                if ((stlm & 0x8f) != 0 || indexBytes == 3
+                        || (payload.length - 2) % (indexBytes + lengthBytes) != 0) {
+                    throw markerError(segment, "TLM field sizes or entry length are invalid");
+                }
+                for (int offset = 2; offset < payload.length; offset += indexBytes + lengthBytes) {
+                    int tile = -1;
+                    if (indexBytes == 1) {
+                        tile = payload[offset] & 0xff;
+                    } else if (indexBytes == 2) {
+                        tile = ((payload[offset] & 0xff) << 8) | (payload[offset + 1] & 0xff);
+                    }
+                    long length = 0;
+                    for (int i = 0; i < lengthBytes; i++) {
+                        length = (length << 8) | (payload[offset + indexBytes + i] & 0xff);
+                    }
+                    if ((tile >= size.tileCount()) || length < 14) {
+                        throw markerError(segment, "TLM tile index or tile-part length is invalid");
+                    }
+                    tileLengths.add(new TileLength(tile, length));
+                    if (tileLengths.size() > 1_000_000) {
+                        throw markerError(segment, "TLM entry count exceeds the decoder limit");
+                    }
+                }
             } else if (marker == Jpeg2000Marker.SOT) {
                 requireRequiredHeader(size, coding, quantization);
                 startSegment = segment;
@@ -129,19 +196,67 @@ public final class Jpeg2000ClassicCodestreamParser {
             }
         }
 
+        int[] shifts = new int[size.components().size()];
+        for (Map.Entry<Integer, Integer> region : regionShifts.entrySet()) {
+            shifts[region.getKey()] = region.getValue();
+        }
+
+        for (Jpeg2000MarkerSegment segment : deferredQcc) {
+            byte[] payload = segment.payload();
+            if (payload.length < (size.components().size() < 257 ? 1 : 2)) {
+                throw markerError(segment, "QCC component index is truncated");
+            }
+            int component = size.components().size() < 257 ? payload[0] & 0xff
+                    : ((payload[0] & 0xff) << 8) | (payload[1] & 0xff);
+            Jpeg2000CodingStyleSegment resolved = coding;
+            for (Jpeg2000ComponentCodingStyleSegment override : componentCoding) {
+                if (override.componentIndex() == component) {
+                    resolved = override.resolve(coding, size, limits);
+                    break;
+                }
+            }
+            Jpeg2000ComponentQuantizationSegment parsed =
+                    Jpeg2000ComponentQuantizationSegment.parse(segment, size, resolved);
+            if (!quantizationComponents.add(parsed.componentIndex())) {
+                throw markerError(segment, "duplicate QCC component override");
+            }
+            componentQuantization.add(parsed);
+        }
+
         List<Jpeg2000ClassicTilePart> tileParts = new ArrayList<Jpeg2000ClassicTilePart>();
         Map<Integer, TilePartState> tileStates = new HashMap<Integer, TilePartState>();
         Jpeg2000MarkerSegment current = startSegment;
         while (current.marker() == Jpeg2000Marker.SOT) {
             Jpeg2000StartOfTileSegment startOfTile = Jpeg2000StartOfTileSegment.parse(current, size);
+            if (!tileLengths.isEmpty()) {
+                if (tileParts.size() >= tileLengths.size()) {
+                    throw markerError(current, "SOT has no matching TLM entry");
+                }
+                TileLength expected = tileLengths.get(tileParts.size());
+                if ((expected.tileIndex >= 0 && expected.tileIndex != startOfTile.tileIndex())
+                        || expected.length != startOfTile.tilePartLength()) {
+                    throw markerError(current, "SOT tile index or Psot differs from TLM");
+                }
+            }
             validateTilePartOrder(current, startOfTile, tileStates);
             if (startOfTile.tilePartLength() == 0) {
                 throw markerError(current, "Psot=0 is unsupported because the tile-part boundary is ambiguous");
             }
 
+            ByteArrayOutputStream ppt = new ByteArrayOutputStream();
+            int nextPptIndex = 0;
             Jpeg2000MarkerSegment sod = reader.readNext();
+            while (sod.marker() == Jpeg2000Marker.PPT) {
+                byte[] payload = sod.payload();
+                if (payload.length < 2 || (payload[0] & 0xff) != nextPptIndex++) {
+                    throw markerError(sod, "PPT segment index or payload is invalid");
+                }
+                ppt.write(payload, 1, payload.length - 1);
+                limits.requireFrameLength(ppt.size());
+                sod = reader.readNext();
+            }
             if (sod.marker() != Jpeg2000Marker.SOD) {
-                throw markerError(sod, "SOD must immediately follow SOT in the supported classic profile");
+                throw markerError(sod, "SOD must follow SOT/PPT in the supported classic profile");
             }
             long tilePartEnd = checkedAdd(
                     current.offset(), startOfTile.tilePartLength(), "SOT Psot");
@@ -150,13 +265,46 @@ public final class Jpeg2000ClassicCodestreamParser {
                 throw markerError(current, "SOT Psot is shorter than its tile-part header");
             }
             byte[] tileData = reader.readRaw((int) tileDataLength, "tile-part data");
-            tileParts.add(new Jpeg2000ClassicTilePart(startOfTile, tileData));
+            tileParts.add(new Jpeg2000ClassicTilePart(startOfTile, tileData,
+                    ppt.toByteArray()));
             current = reader.readNext();
         }
         if (current.marker() != Jpeg2000Marker.EOC) {
             throw markerError(current, "only SOT or EOC may follow tile-part data");
         }
+        if (!tileLengths.isEmpty() && tileParts.size() != tileLengths.size()) {
+            throw markerError(current, "TLM has entries without matching tile-parts");
+        }
         validateTilePartCompleteness(size, tileStates, current);
+        if (ppm.size() > 0) {
+            byte[] packed = ppm.toByteArray();
+            int position = 0;
+            for (int i = 0; i < tileParts.size(); i++) {
+                if (packed.length - position < 4) {
+                    throw new Jpeg2000Exception("JPEG 2000 PPM Nppm field is truncated");
+                }
+                long length = ((long) (packed[position] & 0xff) << 24)
+                        | ((long) (packed[position + 1] & 0xff) << 16)
+                        | ((long) (packed[position + 2] & 0xff) << 8)
+                        | (packed[position + 3] & 0xff);
+                position += 4;
+                if (length == 0 || length > packed.length - position) {
+                    throw new Jpeg2000Exception("JPEG 2000 PPM Nppm length is invalid");
+                }
+                Jpeg2000ClassicTilePart part = tileParts.get(i);
+                if (part.packedHeaders().length != 0) {
+                    throw new Jpeg2000Exception("JPEG 2000 PPM and PPT cannot both supply tile-part headers");
+                }
+                byte[] header = new byte[(int) length];
+                System.arraycopy(packed, position, header, 0, header.length);
+                position += header.length;
+                tileParts.set(i, new Jpeg2000ClassicTilePart(part.startOfTile(),
+                        part.data(), header));
+            }
+            if (position != packed.length) {
+                throw new Jpeg2000Exception("JPEG 2000 PPM contains extra packed header bytes");
+            }
+        }
         return new Jpeg2000ClassicCodestream(
                 size,
                 coding,
@@ -164,6 +312,8 @@ public final class Jpeg2000ClassicCodestreamParser {
                 quantization,
                 componentQuantization,
                 comments,
+                progressionChanges,
+                shifts,
                 tileParts,
                 reader.position());
     }
@@ -210,6 +360,16 @@ public final class Jpeg2000ClassicCodestreamParser {
     private static final class TilePartState {
         private int nextIndex;
         private int declaredCount;
+    }
+
+    private static final class TileLength {
+        private final int tileIndex;
+        private final long length;
+
+        private TileLength(int tileIndex, long length) {
+            this.tileIndex = tileIndex;
+            this.length = length;
+        }
     }
 
     private static void requireSize(Jpeg2000SizeSegment size, Jpeg2000MarkerSegment segment)

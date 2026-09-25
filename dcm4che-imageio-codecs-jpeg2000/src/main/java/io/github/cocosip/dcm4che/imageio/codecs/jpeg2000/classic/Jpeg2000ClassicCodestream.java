@@ -19,6 +19,8 @@ public final class Jpeg2000ClassicCodestream {
     private final Jpeg2000QuantizationSegment quantization;
     private final List<Jpeg2000ComponentQuantizationSegment> componentQuantizations;
     private final List<Jpeg2000CommentSegment> comments;
+    private final List<Jpeg2000ProgressionChange> progressionChanges;
+    private final int[] regionShifts;
     private final List<Jpeg2000ClassicTilePart> tileParts;
     private final long logicalLength;
 
@@ -29,6 +31,8 @@ public final class Jpeg2000ClassicCodestream {
             Jpeg2000QuantizationSegment quantization,
             List<Jpeg2000ComponentQuantizationSegment> componentQuantizations,
             List<Jpeg2000CommentSegment> comments,
+            List<Jpeg2000ProgressionChange> progressionChanges,
+            int[] regionShifts,
             List<Jpeg2000ClassicTilePart> tileParts,
             long logicalLength) {
         this.size = size;
@@ -37,6 +41,8 @@ public final class Jpeg2000ClassicCodestream {
         this.quantization = quantization;
         this.componentQuantizations = immutableCopy(componentQuantizations);
         this.comments = immutableCopy(comments);
+        this.progressionChanges = immutableCopy(progressionChanges);
+        this.regionShifts = regionShifts.clone();
         if (tileParts == null || tileParts.isEmpty()) {
             throw new IllegalArgumentException("JPEG 2000 codestream requires at least one tile-part");
         }
@@ -70,6 +76,14 @@ public final class Jpeg2000ClassicCodestream {
 
     public List<Jpeg2000CommentSegment> comments() {
         return comments;
+    }
+
+    List<Jpeg2000ProgressionChange> progressionChanges() {
+        return progressionChanges;
+    }
+
+    int regionShift(int component) {
+        return regionShifts[component];
     }
 
     public Jpeg2000StartOfTileSegment startOfTile() {

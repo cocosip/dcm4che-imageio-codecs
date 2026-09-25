@@ -35,12 +35,12 @@ Snapshot date: 2026-09-25
 | Item | State | Evidence |
 | --- | --- | --- |
 | Classic JPEG 2000 design | `COMPLETE` | `docs/jpeg2000-development-plan.md`, commit `2fd09f2` |
-| Java implementation | `IN_PROGRESS` | P1-P5 complete; P6 irreversible/lossy work is next. |
-| SPI registration | `NOT_STARTED` | Reader and writer service entries remain commented out. |
-| External interoperability | `IN_PROGRESS` | Synthetic fo-dicom.Codecs `.90` fixture decodes exactly in Java; a separate fo-dicom.Codecs decode of Java `.90` output also matched the source hash. `.91` and release checks remain for P9. |
-| Active phase | `P6` | 9/7 DWT, quantization, rate allocation, and `.91` |
+| Java implementation | `COMPLETE` | P1-P9 exit gates passed in the working tree for classic `.90/.91`. |
+| SPI registration | `COMPLETE` | Four syntax-specific classic service entries enabled; HTJ2K remains disabled. |
+| External interoperability | `COMPLETE` | fo-dicom.Codecs 5.16.7 decoded Java `.90/.91` output; Java decoded foreign `.90/.91` fixtures. Five additional Java marker variants decoded externally with exact pixels. |
+| Active phase | `P9 complete` | Classic release gates passed; HTJ2K remains separate future work. |
 
-Implementation progress is **5 of 9 phases complete**. Design completion is
+Implementation progress is **9 of 9 phases complete**. Design completion is
 tracked separately and is not counted as codec implementation.
 
 ## 4. Delivery Sequence
@@ -52,10 +52,10 @@ tracked separately and is not counted as codec implementation.
 | P3 | MQ coder and EBCOT code-block coding | P1-P2 | `COMPLETE` |
 | P4 | Tag trees, packets, progression orders, tiles, and tile-parts | P1-P3 | `COMPLETE` |
 | P5 | `.90` lossless codec vertical slice | P1-P4 | `COMPLETE` |
-| P6 | 9/7 DWT, quantization, PCRD rate allocation, and `.91` | P1-P5 | `NOT_STARTED` |
-| P7 | Full required decoder compatibility and resource hardening | P1-P6 | `NOT_STARTED` |
-| P8 | ImageIO/dcm4che integration and syntax-specific SPI | P5-P7 | `NOT_STARTED` |
-| P9 | Bidirectional external interoperability and release gate | P5-P8 | `NOT_STARTED` |
+| P6 | 9/7 DWT, quantization, PCRD rate allocation, and `.91` | P1-P5 | `COMPLETE` |
+| P7 | Full required decoder compatibility and resource hardening | P1-P6 | `COMPLETE` |
+| P8 | ImageIO/dcm4che integration and syntax-specific SPI | P5-P7 | `COMPLETE` |
+| P9 | Bidirectional external interoperability and release gate | P5-P8 | `COMPLETE` |
 
 Phases are ordered by dependency, not calendar estimate. A later phase may add
 fixtures or failing tests early, but its production path cannot be declared
@@ -266,20 +266,27 @@ declared complete and HTJ2K planning move into implementation.
 
 ## 7. Classic JPEG 2000 Release Gates
 
-- [ ] `.90` exact encode/decode matrix passes for 8/12/16-bit allocated samples.
-- [ ] `.91` irreversible and permitted reversible paths pass fixed error/exact
+- [x] `.90` exact encode/decode matrix passes for 8/12/16-bit allocated samples.
+- [x] `.91` irreversible and permitted reversible paths pass fixed error/exact
   pixel contracts.
-- [ ] All five progression orders, quality layers, multiple tiles, and ordered
+- [x] All five progression orders, quality layers, multiple tiles, and ordered
   tile-parts pass the required decode matrix.
-- [ ] Signed samples, RGB/RCT/ICT, planar/interleaved input, Palette Color,
+- [x] Signed samples, RGB/RCT/ICT, planar/interleaved input, Palette Color,
   `YBR_FULL`, `YBR_FULL_422`, and decode-compatible `YBR_PARTIAL_422` pass.
-- [ ] ImageReadParam region/subsampling and multi-frame caller orchestration pass.
-- [ ] Malformed marker, packet, entropy, overflow, and resource-limit tests pass.
-- [ ] `.90` and `.91` each have bidirectional external pixel evidence.
-- [ ] DICOM fragment spanning, padding exclusion, metadata ownership, and exact
+- [x] ImageReadParam region/subsampling and multi-frame caller orchestration pass.
+- [x] Malformed marker, packet, entropy, overflow, and resource-limit tests pass.
+- [x] `.90` and `.91` each have bidirectional external pixel evidence.
+- [x] DICOM fragment spanning, padding exclusion, metadata ownership, and exact
   syntax-specific lookup pass.
-- [ ] SPI service entries expose only the completed classic providers.
-- [ ] Full Maven reactor and clean package verification pass.
+- [x] SPI service entries expose only the completed classic providers.
+- [x] Full Maven reactor and clean package verification pass.
+
+The codec's direct ImageIO path supports `YBR_FULL_422` input. The current
+dcm4che `Compressor` rejects that photometric interpretation in its constructor
+before calling this codec; that host limitation is recorded by an integration
+test. Direct decoding with a `YBR_PARTIAL_422` descriptor is also covered.
+PLM/PLT are deliberately rejected, as allowed by the design's conditional
+acceptance policy; TLM lengths and tile references are validated when present.
 
 ## 8. Verification Evidence
 
@@ -306,6 +313,13 @@ declared complete and HTJ2K planning move into implementation.
 | 2026-09-25 | P5 | Working tree | `./mvnw.cmd -pl dcm4che-imageio-codecs-jpeg2000 -am test` | JPEG 2000 module passed 107 tests: 8/12/16-bit signed/unsigned grayscale and RGB exact round trips, planar RGB, Palette Color, constant/tiny frames, one-frame ImageIO, deterministic five-level markers, and foreign `.90` decode. |
 | 2026-09-25 | P5 | fo-dicom.Codecs 5.16.7 separate process | Decode Java `.90` output SHA-256 `8769E17D...F947CFEB` with `DicomTranscoder` | Foreign decoder returned 4355 pixels with source SHA-256 `EBEFE59C...68C08D7`. Formal bidirectional release evidence remains in P9. |
 | 2026-09-25 | P5 | Working tree | `./mvnw.cmd test` | Full reactor passed 358 tests, 0 failures, 0 errors, 0 skipped. P5 exit gate satisfied. |
+| 2026-09-25 | P6 | Working tree | `Jpeg2000Dwt97Test`, `Jpeg2000IrreversibleCodecTest`, `Jpeg2000ImageWriteParamTest` | Controlled 9/7 lifting, quantization and rate-layer policy pass; `.91` defaults to irreversible, permits one-component reversible output, and rejects public reversible RGB output. Foreign `.91` synthetic and 512x512 RGB fixtures decode within maximum error 6. |
+| 2026-09-25 | P7 | Working tree and committed marker fixtures | `Jpeg2000ComponentOverrideTest`, `Jpeg2000ProgressionChangeTest`, `Jpeg2000RegionOfInterestTest`, `Jpeg2000PackedHeaderTest`, `Jpeg2000PacketMarkerTest`, `Jpeg2000MalformedFrameTest`, `Jpeg2000MarkerInteropFixtureTest` | COC/QCC, POC, RGN, PPM/PPT, SOP/EPH and TLM paths, malformed/resource bounds, concurrent independent decodes, and output-size checks pass. Five fixed Java marker variants decode exactly in Java and independently in fo-dicom.Codecs. |
+| 2026-09-25 | P8 | Working tree | `Jpeg2000DicomIntegrationTest`, `Jpeg2000LosslessImageIoTest` | Exact `.90/.91` provider lookup, multi-frame `.90`, `.91`, RGB `YBR_RCT/YBR_ICT`, short-chunk input, region/subsampling, direct YBR variants, and DICOM padding policy pass; host `YBR_FULL_422` constructor limitation documented. |
+| 2026-09-25 | P9 | fo-dicom.Codecs 5.16.7 separate process | `tools/jpeg2000-interop` `verify` / `encode` | Java `.90` and five marker variants: 4355 exact pixels, SHA-256 `EBEFE59C...68C08D7`; Java `.91`: maximum error 6. Java decoding foreign `.90` is exact; foreign `.91` synthetic fixture differs from the native decoder by at most 6. Fixture lengths, hashes, and provenance are in `src/test/resources/jpeg2000/README.md`. |
+| 2026-09-25 | P9 | Working tree | `.\mvnw.cmd clean package` | Full six-module reactor built; 393 tests, 0 failures, 0 errors, 0 skipped. JPEG 2000 module: 142 tests. |
+| 2026-09-25 | P9 | Built JAR | JShell `ImageIO.getImageReadersByFormatName` / `getImageWritersByFormatName` | Both `.90/.91` format names load the expected Java providers; generic `jpeg2000` and `htj2k` writers are absent. |
+| 2026-09-25 | P9 | Working tree | `.\mvnw.cmd test` | Full six-module reactor passed again: 393 tests, 0 failures, 0 errors, 0 skipped. |
 
 For focused Java tests, use this PowerShell command shape and replace the test
 class name with the current phase suite:
@@ -327,6 +341,5 @@ dependencies, runtime fallbacks, or substitutes for the pure-Java implementation
 
 ## 9. Next Work Item
 
-Start P6 with irreversible 9/7 lifting and subband quantization, then add PCRD
-rate allocation and the `.91` syntax policy. Keep SPI service registration
-disabled until the P8 integration gate.
+Classic JPEG 2000 `.90/.91` is complete for the documented release matrix.
+HTJ2K `.201/.202/.203` remains deferred and has no ImageIO SPI registration.

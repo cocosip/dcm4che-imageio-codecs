@@ -14,7 +14,7 @@ import io.github.cocosip.dcm4che.imageio.codecs.core.spi.AbstractDicomImageReade
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.classic.Jpeg2000LosslessCodec;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Limits;
 
-public final class Jpeg2000LosslessImageReader extends AbstractDicomImageReader {
+public class Jpeg2000LosslessImageReader extends AbstractDicomImageReader {
     public Jpeg2000LosslessImageReader(ImageReaderSpi provider) {
         super(provider);
     }

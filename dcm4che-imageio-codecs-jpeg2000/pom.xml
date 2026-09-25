@@ -13,14 +13,11 @@
     <artifactId>dcm4che-imageio-codecs-jpeg2000</artifactId>
     <name>dcm4che ImageIO Codecs - JPEG 2000</name>
     <description>
-        Pure Java JPEG 2000 and HTJ2K codec for dcm4che.
-        JPEG 2000 classic (ISO/IEC 15444-1) and HTJ2K (ISO/IEC 15444-15).
+        Pure Java classic JPEG 2000 codec for dcm4che (ISO/IEC 15444-1).
         Transfer syntaxes:
           - JPEG 2000 Lossless   (1.2.840.10008.1.2.4.90)
           - JPEG 2000 Lossy      (1.2.840.10008.1.2.4.91)
-          - HTJ2K Lossless       (1.2.840.10008.1.2.4.201)
-          - HTJ2K Lossless RPCL  (1.2.840.10008.1.2.4.202)
-          - HTJ2K Lossy          (1.2.840.10008.1.2.4.203)
+        HTJ2K transfer syntaxes are reserved for future work.
     </description>
 
     <dependencies>

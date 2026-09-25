@@ -22,7 +22,7 @@ Snapshot date: 2026-09-25
 | --- | --- | --- |
 | HTJ2K design | Available | `docs/htj2k-development-plan.md` defines the scope and release gates. |
 | Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
-| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has structural inspection, bounded MEL/VLC/MagSgn primitives, and a one-pass cleanup block encoder/decoder checked against OpenJPH bytes. HT packets, full-frame coding, and ImageIO adapters are absent. |
+| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has structural inspection, bounded MEL/VLC/MagSgn primitives, a one-pass cleanup block encoder/decoder checked against OpenJPH bytes, and an initial one-layer HT packet codec. Full-frame coding and ImageIO adapters are absent. |
 | HT SPI registration | Disabled | Reader/writer service files contain only commented, generic HTJ2K placeholders; no `.201/.202/.203` providers are registered. |
 | External HT interoperability | `NOT_STARTED` | No committed HT codestream fixtures or foreign-decoder pixel checks are present. |
 
@@ -40,7 +40,7 @@ gate pass.
 | --- | --- | --- | --- |
 | H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `IN_PROGRESS` |
 | H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `IN_PROGRESS` |
-| H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `NOT_STARTED` |
+| H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `IN_PROGRESS` |
 | H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `NOT_STARTED` |
 | H5 | `.203` irreversible path and all-syntax external interoperability | H4 | `NOT_STARTED` |
 | H6 | ImageIO/DICOM integration, hardening, and SPI release | H3-H5 | `NOT_STARTED` |
@@ -85,6 +85,9 @@ These block vectors do not establish packet or full-codestream interoperability.
 
 ### H3: `.201` lossless vertical slice
 
+- [x] Add an independently testable, one-layer inline HT packet header/body
+  codec with tag-tree inclusion, missing-bitplane values, length bounds, and
+  malformed-header rejection.
 - [ ] Implement HT packet contributions and tag trees, reversible 5/3 policy,
   one-layer 64x64 code blocks, and a one-full-image-tile encoder.
 - [ ] Emit CAP and exact TLM/`Psot` accounting for resolution tile-parts; end the
@@ -164,6 +167,7 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | 2026-09-25 | Baseline | Working tree | Repository inspection of HT design, JPEG 2000 sources/tests, fixtures, and SPI service files | Classic foundation exists; HT source, tests, fixtures, and active SPI entries are absent. No HT phase is complete. |
 | 2026-09-25 | H1 | Working tree | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q` | Passed after adding HT structural parser tests; classic and shared tests remain passing. H1 remains in progress pending adapter wiring and foreign CAP/profile vectors. |
 | 2026-09-25 | H2 | Working tree | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kCleanupPassTest` vectors from local OpenJPH | 173 tests passed. MEL/VLC/MagSgn primitives and cleanup block encode/decode match recorded OpenJPH bytes and coefficients; refinement and full-frame interoperability remain open. |
+| 2026-09-26 | H3 | Working tree after `a15af20` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kPacketCodecTest` | Passed. One-layer inline packet headers, empty/mixed subbands, and bounded decoding have local tests; no foreign codestream packet or pixel comparison yet. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

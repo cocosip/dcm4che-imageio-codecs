@@ -16,7 +16,7 @@ import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Limits;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000ProgressionOrder;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Raster;
 
-class Htj2kLosslessFrameTest {
+class Htj2kFrameTest {
     @Test
     void roundTripsGrayscaleAcrossCodeBlockAndPrecisionBoundaries() throws Exception {
         roundTrip(1, 1, 8, false);

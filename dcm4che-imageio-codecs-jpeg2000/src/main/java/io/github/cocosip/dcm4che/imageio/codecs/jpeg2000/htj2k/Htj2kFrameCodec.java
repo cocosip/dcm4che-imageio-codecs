@@ -60,20 +60,28 @@ public final class Htj2kFrameCodec {
     public byte[] encode(Jpeg2000Raster raster,
             Jpeg2000ProgressionOrder progression) throws IOException {
         if (!reversible) {
-            return Htj2kSingleTileFrame.encodeLossy(raster);
+            return Htj2kFrameProcessor.encodeLossy(raster);
         }
         if (progression == null) {
             throw new NullPointerException("progression");
         }
-        return Htj2kSingleTileFrame.encode(raster,
+        return Htj2kFrameProcessor.encode(raster,
                 selectableProgression ? progression : Jpeg2000ProgressionOrder.RPCL);
+    }
+
+    public byte[] encode(Jpeg2000Raster raster, double targetRatio)
+            throws IOException {
+        if (reversible) {
+            throw new IIOException("HTJ2K target ratio requires the lossy transfer syntax");
+        }
+        return Htj2kFrameProcessor.encodeLossy(raster, targetRatio);
     }
 
     public Jpeg2000Raster decode(byte[] codestream) throws IOException {
         if (!reversible) {
-            return Htj2kSingleTileFrame.decodeLossy(codestream, this);
+            return Htj2kFrameProcessor.decodeLossy(codestream, this);
         }
-        return Htj2kSingleTileFrame.decode(codestream, this);
+        return Htj2kFrameProcessor.decode(codestream, this);
     }
 
     String transferSyntaxUid() {

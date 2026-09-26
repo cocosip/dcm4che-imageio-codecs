@@ -29,6 +29,21 @@ class Htj2kForeignFrameTest {
     }
 
     @Test
+    void decodesOpenJphSixteenBitGrayscaleExactly() throws Exception {
+        byte[] codestream = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_openjph_gray16.j2c").toURI()));
+        Jpeg2000Raster decoded = Htj2kFrameCodec.forTransferSyntax(
+                Htj2kFrameCodec.LOSSLESS_UID).decode(codestream);
+        assertEquals(16, decoded.precision());
+        int[] pixels = decoded.component(0);
+        for (int y = 0; y < 128; y++) {
+            for (int x = 0; x < 128; x++) {
+                assertEquals(x * 2 + y * 3, pixels[y * 128 + x]);
+            }
+        }
+    }
+
+    @Test
     void decodesOpenJphColorCprlPixelsExactly() throws Exception {
         byte[] codestream = Files.readAllBytes(Paths.get(getClass().getResource(
                 "/jpeg2000/htj2k_openjph_rgb128_cprl.j2c").toURI()));
@@ -42,6 +57,23 @@ class Htj2kForeignFrameTest {
                 for (int x = 0; x < 128; x++) {
                     assertEquals((x * 2 + y * 3 + c * 19) & 255,
                             pixels[y * 128 + x], "component " + c + " pixel " + x + "," + y);
+                }
+            }
+        }
+    }
+
+    @Test
+    void decodesFourOpenJphTilesExactly() throws Exception {
+        byte[] codestream = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_openjph_rgb128_four_tiles.j2c").toURI()));
+        Jpeg2000Raster decoded = Htj2kFrameCodec.forTransferSyntax(
+                Htj2kFrameCodec.LOSSLESS_UID).decode(codestream);
+        for (int c = 0; c < 3; c++) {
+            int[] pixels = decoded.component(c);
+            for (int y = 0; y < 128; y++) {
+                for (int x = 0; x < 128; x++) {
+                    assertEquals((x * 2 + y * 3 + c * 19) & 255,
+                            pixels[y * 128 + x], "tile pixel " + x + "," + y);
                 }
             }
         }

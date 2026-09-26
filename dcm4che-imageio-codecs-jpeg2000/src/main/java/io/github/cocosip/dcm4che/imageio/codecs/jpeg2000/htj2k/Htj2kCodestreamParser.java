@@ -62,8 +62,9 @@ final class Htj2kCodestreamParser {
                     + Integer.toHexString(size.capabilities()));
         }
         for (Jpeg2000SizeSegment.Component component : size.components()) {
-            if (component.precision() > 16) {
-                throw error(segment, "initial HT profile supports at most 16-bit components");
+            if (component.precision() < 2 || component.precision() > 16
+                    || component.separationX() != 1 || component.separationY() != 1) {
+                throw error(segment, "initial HT profile requires full-resolution 2..16-bit components");
             }
         }
 
@@ -122,6 +123,14 @@ final class Htj2kCodestreamParser {
         }
         if (ccap15 >= 0 && ((ccap15 & 0x20) != 0) == coding.reversible) {
             throw error(segment, "CAP Ccap15 transform flag disagrees with COD");
+        }
+        if (ccap15 >= 0) {
+            int expectedCcap = coding.reversible
+                    ? Htj2kQuantizer.reversibleCcap15(quantizationPayload)
+                    : Htj2kQuantizer.irreversibleCcap15(quantizationPayload);
+            if (ccap15 != expectedCcap) {
+                throw error(segment, "CAP Ccap15 magnitude disagrees with QCD");
+            }
         }
 
         Map<Integer, TileState> states = new HashMap<Integer, TileState>();

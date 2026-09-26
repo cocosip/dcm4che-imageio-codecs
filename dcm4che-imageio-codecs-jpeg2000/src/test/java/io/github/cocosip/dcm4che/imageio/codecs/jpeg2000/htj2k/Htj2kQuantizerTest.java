@@ -48,6 +48,20 @@ class Htj2kQuantizerTest {
                 () -> Htj2kQuantizer.irreversibleKmax(qcd, 6, 1));
     }
 
+    @Test
+    void mapsTargetRatioToBoundedQualityHint() throws Exception {
+        assertEquals(92, Htj2kQuantizer.qualityHint(2));
+        assertEquals(88, Htj2kQuantizer.qualityHint(3));
+        assertEquals(30, Htj2kQuantizer.qualityHint(100));
+        byte[] defaultQcd = Htj2kQuantizer.irreversiblePayload(8, 5);
+        byte[] hintedQcd = Htj2kQuantizer.irreversiblePayload(8, 5, 2);
+        org.junit.jupiter.api.Assertions.assertFalse(
+                java.util.Arrays.equals(defaultQcd, hintedQcd));
+        assertEquals(0x22, hintedQcd[0] & 0xff);
+        assertThrows(IIOException.class,
+                () -> Htj2kQuantizer.irreversiblePayload(8, 5, Double.NaN));
+    }
+
     private static byte[] hex(String value) {
         String digits = value.replace(" ", "");
         byte[] bytes = new byte[digits.length() / 2];

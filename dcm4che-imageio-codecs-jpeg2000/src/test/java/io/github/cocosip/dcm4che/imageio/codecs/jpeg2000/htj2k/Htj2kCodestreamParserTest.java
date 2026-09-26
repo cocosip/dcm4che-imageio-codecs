@@ -79,6 +79,10 @@ class Htj2kCodestreamParserTest {
         wrongCap[54] = 0x20;
         assertRejected(Htj2kFrameCodec.LOSSLESS_UID, wrongCap,
                 "CAP Ccap15 transform flag disagrees with COD");
+        byte[] wrongMagnitude = frame(0x4000, true, 2, 0x40, 14, 14, false, false);
+        wrongMagnitude[54] = 0;
+        assertRejected(Htj2kFrameCodec.LOSSLESS_UID, wrongMagnitude,
+                "CAP Ccap15 magnitude disagrees with QCD");
     }
 
     @Test
@@ -148,7 +152,7 @@ class Htj2kCodestreamParserTest {
         siz[38] = 1;
         segment(output, Jpeg2000Marker.SIZ, siz);
         segment(output, Jpeg2000Marker.CAP,
-                new byte[] {0, 2, 0, 0, 0, (byte) (reversible ? 0 : 0x20)});
+                new byte[] {0, 2, 0, 0, 0, (byte) (reversible ? 1 : 0x22)});
         for (byte[] extra : extraMarkers) {
             output.write(extra);
         }

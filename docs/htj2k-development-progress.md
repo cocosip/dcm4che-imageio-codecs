@@ -22,13 +22,13 @@ Snapshot date: 2026-09-26
 | --- | --- | --- |
 | HTJ2K design | Available | `docs/htj2k-development-plan.md` defines the scope and release gates. |
 | Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
-| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has structural inspection, bounded MEL/VLC/MagSgn primitives, a one-pass cleanup block encoder/decoder, one-layer packet codec, and one-tile reversible/irreversible mono/RGB frame paths. `.202` accepts five progressions; ImageIO adapters are absent. |
-| HT SPI registration | Disabled | Reader/writer service files contain only commented, generic HTJ2K placeholders; no `.201/.202/.203` providers are registered. |
-| External HT interoperability | `IN_PROGRESS` | Committed OpenJPH lossless grayscale RPCL, lossless RGB CPRL, and lossy RGB RPCL codestreams pass Java pixel checks. OpenJPH decodes Java `.201/.202` output exactly and `.203` 8/12-bit RGB output within recorded tolerances. Broader foreign matrix remains open. |
+| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has one-pass cleanup, one-layer packets, a one-tile reversible/irreversible encoder, and a multi-tile decoder. Syntax-bound ImageIO reader/writer classes and write parameters exist and have direct-call tests. |
+| HT SPI registration | Disabled | Six syntax-specific SPI classes exist, but service files still contain only commented HTJ2K placeholders; no `.201/.202/.203` providers are registered. |
+| External HT interoperability | `IN_PROGRESS` | Committed OpenJPH 8/16-bit grayscale, RGB CPRL, four-tile RGB, and lossy RGB codestreams pass Java pixel checks. OpenJPH decodes Java `.201/.202` output exactly and `.203` 8/12-bit RGB output within recorded tolerances. Refinement and broader foreign matrix remain open. |
 
-**Implementation progress: 0 of 6 phases complete.** H1 is in progress. The
-classic codec remains a prerequisite, not evidence that an HT phase has passed.
-Structural inspection does not decode HT packets or produce an HT codestream.
+**Implementation progress: 1 of 6 phases complete.** H1 passed its structural
+and adapter gate. H2-H6 remain in progress; implemented frame paths do not yet
+establish the complete HT profile or justify SPI release.
 
 ## 3. Delivery sequence and exit gates
 
@@ -38,31 +38,32 @@ gate pass.
 
 | Phase | Deliverable | Depends on | State |
 | --- | --- | --- | --- |
-| H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `IN_PROGRESS` |
+| H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `COMPLETE` |
 | H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `IN_PROGRESS` |
 | H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `IN_PROGRESS` |
 | H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `IN_PROGRESS` |
 | H5 | `.203` irreversible path and all-syntax external interoperability | H4 | `IN_PROGRESS` |
-| H6 | ImageIO/DICOM integration, hardening, and SPI release | H3-H5 | `NOT_STARTED` |
+| H6 | ImageIO/DICOM integration, hardening, and SPI release | H3-H5 | `IN_PROGRESS` |
 
 ### H1: Shared foundation and HT boundaries
 
 - [x] Verify that shared marker framing, immutable geometry, raster normalization,
   RCT/ICT, DWT math, and stateless progression coordinates satisfy HT needs.
-- [ ] Establish the `jpeg2000.htj2k` package and a distinct `Htj2kFrameCodec`
+- [x] Establish the `jpeg2000.htj2k` package and a distinct `Htj2kFrameCodec`
   selected at the transfer-syntax adapter boundary.
 - [x] Keep mutable classic packet/tag-tree state, MQ/EBCOT, PCRD, and HT entropy
   state in their respective packages; do not dispatch through a classic coder flag.
-- [ ] Define bounded CAP, HT `Rsiz`/profile, tile-part, and marker policy. Reject
+- [x] Define bounded CAP, HT `Rsiz`/profile, tile-part, and marker policy. Reject
   unsupported RGN/PPM/PPT and JP2 wrapping with contextual `IIOException`.
 
 **Exit gate:** focused structural tests verify shared contracts and HT-specific
 profile rejection without changing classic `.90/.91` behavior.
 
-The new parser checks SOC/SIZ, optional CAP, HT COD style, QCD shape, optional
-TLM, ordered SOT/SOD tile-parts, EOC, and DICOM padding. The H1 gate remains
-open: the transfer-syntax ImageIO adapter is not connected, and CAP/Ccap and
-`Rsiz` profile policy still need validation against committed foreign HT vectors.
+The HT parser validates SOC/SIZ, optional CAP including Ccap15/QCD agreement,
+HT COD/QCD style, optional TLM, ordered SOT/SOD tile-parts, EOC, and DICOM
+padding. Syntax-specific adapters select `Htj2kFrameCodec`; focused parser,
+adapter, and classic tests pass. The adapters are directly callable, while
+SPI service registration remains an H6 gate.
 
 ### H2: Part 15 block primitives
 
@@ -94,7 +95,7 @@ These block vectors do not establish packet or full-codestream interoperability.
   raw codestream at EOC without counting DICOM padding.
 - [x] Decode a foreign `.201` grayscale codestream and verify exact pixels; have
   a foreign HT decoder verify Java `.201` output.
-- [ ] Check SIZ/descriptor agreement, CAP/profile constraints, packet bounds,
+- [x] Check SIZ/descriptor agreement, CAP/profile constraints, packet bounds,
   multiple tiles, and ordered tile-parts in the decoder.
 
 **Exit gate:** exact grayscale encode/decode and bidirectional foreign pixel
@@ -123,11 +124,11 @@ comparison pass for `.201/.202`.
 
 ### H5: `.203` irreversible path and interoperability
 
-- [ ] Add HT 9/7 transform and quantization policy, mandatory three-component
+- [x] Add HT 9/7 transform and quantization policy, mandatory three-component
   ICT, default `targetRatio=0` policy, and the specified quality-hint mapping.
-- [ ] Enforce one layer and the supported write parameters; reject unsupported
+- [x] Enforce one layer and the supported write parameters; reject unsupported
   precision, sampling, and profile features.
-- [ ] Run `.203` foreign encode to Java decode and Java encode to foreign decode
+- [x] Run `.203` foreign encode to Java decode and Java encode to foreign decode
   with fixed recorded pixel tolerances.
 - [ ] Commit HT fixtures with provenance, dimensions, precision, signedness,
   transfer syntax, parameters, and expected pixels or tolerance.
@@ -136,8 +137,10 @@ The default `.203` frame path uses 9/7, ICT for RGB, one HT cleanup pass, and
 OpenJPH-matched QCD/CAP defaults. The 128x128 unsigned 8-bit OpenJPH RGB RPCL
 fixture decodes within 12 sample codes per component. OpenJPH decodes Java
 `.203` RGB output with maximum per-component absolute errors of `2/1/3` for
-8-bit and `2/2/2` for 12-bit source samples. The `targetRatio` quality hint,
-broader source layouts, and the full 12-bit foreign-to-Java matrix remain open.
+8-bit and `2/2/2` for 12-bit source samples. `targetRatio=2` maps to quality
+hint 92 and a doubled quantization step; OpenJPH decodes the Java stream with
+maximum component errors `5/3/5`. Broader source layouts and the full 12-bit
+foreign-to-Java matrix remain open.
 
 **Exit gate:** lossy tolerance and parameter tests pass; all three syntaxes have
 bidirectional foreign pixel evidence, including 12-bit-in-16-bit cases.
@@ -185,6 +188,9 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | 2026-09-26 | H3 | Working tree after `f4f06cf` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kForeignFrameTest`; `src/test/resources/jpeg2000/htj2k_openjph_gray128.j2c` | Passed. Java decoded the OpenJPH 128x128 unsigned 8-bit grayscale fixture to 16,384 exact expected pixels. The fixture was generated with local OpenJPH in fo-dicom.Codecs revision `da3fe114fc918756285ce1f25be265e7b74360a3`. OpenJPH decoded Java-generated output (16,129 bytes) to raw pixels with SHA-256 `ED4EF963EBE8FDCF159BBCDCB4E65B583EC1EAAF8F4260EFC7BB2CC50EB4CCA0`; expected raw pixels have the same hash. The OpenJPH fixture is 16,166 bytes. Other precision, color, progression, multi-tile, and ImageIO gates remain open. |
 | 2026-09-26 | H4 | Working tree after `252ff7d` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kForeignFrameTest`; `src/test/resources/jpeg2000/htj2k_openjph_rgb128_cprl.j2c` | Passed. The 11,161-byte 128x128 unsigned 8-bit RGB CPRL fixture was generated with the same local OpenJPH revision; Java matched all 49,152 component samples exactly. OpenJPH decoded Java-generated RGB CPRL streams at 8-bit unsigned (53,718 bytes), 12-bit unsigned (67,245 bytes), and 16-bit signed (22,050 bytes) to byte-identical raw frames. Matching expected/decoded SHA-256 values are respectively `991F1C2FCF1182E8AAFB782F33EC643FB144D7901A102AD88AE410C233EE946C`, `DDD3C920DDD32DCFC6ECE7E647A08C139DAD49A2CA4A92309EB796DC1B65E26A`, and `21686458ACDD399371CA5FCF36963C6CDB715D7C7F155BCC2ECD47170CD70AFD`. This does not complete H4. |
 | 2026-09-26 | H5 | Working tree after `c9892ae` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kQuantizerTest`; `src/test/resources/jpeg2000/htj2k_openjph_lossy_rgb128.j2c`; local OpenJPH decoder | Passed. The 13,427-byte 128x128 unsigned 8-bit RGB RPCL fixture was generated from the local OpenJPH revision above. Java QCD output matches its 33-byte QCD exactly, and Java decodes its pixels within 12 codes. OpenJPH decoded Java `.203` RGB frames at 8 and 12 bits with maximum absolute component errors `2/1/3` and `2/2/2`. Default quantization only; H5 is not complete. |
+| 2026-09-26 | H1 | Working tree after `3395fd4` | `mvn test -q`; `Htj2kCodestreamParserTest`; `Htj2kImageIoTest`; existing classic JPEG 2000 tests | Passed. Syntax-bound adapters, CAP/Ccap and Rsiz profile rejection, forbidden markers, and the classic baseline pass in the full reactor. H1 exit gate is complete; SPI release remains separate. |
+| 2026-09-26 | H3/H4 | Working tree after `3395fd4` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `src/test/resources/jpeg2000/htj2k_openjph_gray16.j2c`; `src/test/resources/jpeg2000/htj2k_openjph_rgb128_four_tiles.j2c` | Passed. Java exactly decoded the 594-byte OpenJPH 128x128 unsigned 16-bit grayscale fixture and 12,555-byte four-tile (64x64 tiles) unsigned 8-bit RGB fixture. Both were generated with local OpenJPH revision `da3fe114fc918756285ce1f25be265e7b74360a3`. Refinement and odd-dimension foreign fixtures remain open. |
+| 2026-09-26 | H5/H6 | Working tree after `3395fd4` | `mvn test -q`; direct syntax-bound ImageIO tests; local OpenJPH decoder on Java `.203 targetRatio=2` output | Passed. Ratio-hinted 128x128 RGB stream is 44,469 bytes and OpenJPH maximum component errors are `5/3/5`. Direct ImageIO tests cover `.201` mono/Palette, `.202` planar RGB CPRL with region/subsampling and fragmented input, `.203` RGB tolerance, and cross-syntax parameter rejection. SPI service entries remain disabled. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

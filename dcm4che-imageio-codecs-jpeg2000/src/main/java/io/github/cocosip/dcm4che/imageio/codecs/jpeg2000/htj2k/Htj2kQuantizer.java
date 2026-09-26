@@ -84,12 +84,24 @@ final class Htj2kQuantizer {
     }
 
     static byte[] irreversiblePayload(int precision, int levels) throws IIOException {
+        return irreversiblePayload(precision, levels, 0);
+    }
+
+    static byte[] irreversiblePayload(int precision, int levels, double targetRatio)
+            throws IIOException {
         if (precision < 2 || precision > 16 || levels < 0 || levels > 5) {
             throw new IIOException("Invalid HT irreversible quantization profile");
+        }
+        if (!Double.isFinite(targetRatio)
+                || (targetRatio != 0 && targetRatio <= 1)) {
+            throw new IIOException("HT target ratio must be zero or greater than one");
         }
         byte[] payload = new byte[1 + 2 * (1 + 3 * levels)];
         payload[0] = 0x22;
         float baseDelta = Math.scalb(1.0f, -precision);
+        if (targetRatio > 1) {
+            baseDelta *= (100 - qualityHint(targetRatio)) / 4.0f;
+        }
         int index = 1;
         index = writeStep(payload, index, baseDelta / (LOW_97[levels] * LOW_97[levels]));
         for (int d = levels; d > 0; d--) {
@@ -100,6 +112,14 @@ final class Htj2kQuantizer {
                     baseDelta / (HIGH_97[d - 1] * HIGH_97[d - 1]));
         }
         return payload;
+    }
+
+    static int qualityHint(double targetRatio) throws IIOException {
+        if (!Double.isFinite(targetRatio) || targetRatio <= 1) {
+            throw new IIOException("HT quality hint requires a target ratio greater than one");
+        }
+        double tolerance = Math.max(1, Math.ceil(targetRatio - 1));
+        return (int) Math.max(30, Math.min(95, 96 - 4 * tolerance));
     }
 
     static int irreversibleKmax(byte[] qcd, int resolution, int orientation)

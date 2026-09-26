@@ -1,11 +1,13 @@
-# HTJ2K C# interoperability probe
+# HTJ2K Java interoperability tool
 
-This probe calls the public fo-dicom.Codecs C# transcoder. It never calls the
-OpenJPH C++ API directly. The native DLL is required by fo-dicom.Codecs itself.
-The codec source assembly and native DLL paths are supplied at build time:
+The Java commands in this directory encode, decode, and compare HTJ2K frames
+with this repository's codec. The separate C# reference command in
+`tools/fo-dicom-fixtures/htj2k` calls the public fo-dicom.Codecs transcoder
+only for offline fixture generation and verification. The native DLL is a
+fo-dicom.Codecs runtime asset; Java never calls it. Build the tools with:
 
 ```powershell
-dotnet build tools/htj2k-interop/Interop.csproj -c Release '-p:FoDicomCodecsAssembly=<path-to-fo-dicom.Codecs.dll>' '-p:FoDicomNativeDll=<path-to-Dicom.Native.dll>'
+dotnet build tools/fo-dicom-fixtures/htj2k/Interop.csproj -c Release '-p:FoDicomCodecsAssembly=<path-to-fo-dicom.Codecs.dll>' '-p:FoDicomNativeDll=<path-to-Dicom.Native.dll>'
 javac -cp dcm4che-imageio-codecs-jpeg2000/target/classes tools/htj2k-interop/Htj2kExchange.java
 ```
 
@@ -51,6 +53,7 @@ two's-complement codes.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `htj2k_fodicom_gray12_201` | `.201` | 129x131 | 16/12 | 1 | no | 0 | `85F4B0EC8C0CCEF46E3756F1EFD393AEF070623C953930803035B93A5AB8DF04` |
 | `htj2k_fodicom_signed_gray12_201` | `.201` | 129x131 | 16/12 | 1 | yes | 0 low-code difference | `227F08B6BCEED1CE04E602A4808A4E3C9192E7D3C07201D825F5BB6BBF720208` |
+| `htj2k_fodicom_signed_gray16_201` | `.201` | 129x131 | 16/16 | 1 | yes | 0 | `C063F13E2B4967F74A08032B9B22B6D78F03B1F062AF14FD950D6F5D0D41954D` |
 | `htj2k_fodicom_rgb8_202` | `.202` | 64x64 | 8/8 | 3 | no | 0 | `0678A38006A0065AA381DB5E663E2AE95E6B67006686B4B2533A1A32D766031F` |
 | `htj2k_fodicom_rgb8_203` | `.203` | 64x64 | 8/8 | 3 | no | 3 | `FB1F123EACAE6138CB10BD17D236061A967CF811C986938B125FBB7F8266DD40` |
 | `htj2k_fodicom_gray12_203` | `.203` | 129x131 | 16/12 | 1 | no | 2 | `EB9EFFF55BD0BA7E42AD334D4628B850250FF8723AEB6E9E527ADC0C9F7DC61C` |
@@ -60,7 +63,7 @@ For example, after building the Java module and this C# tool:
 ```powershell
 javac -cp dcm4che-imageio-codecs-jpeg2000/target/classes -d tools/htj2k-interop tools/htj2k-interop/Htj2kExchange.java
 java -cp "dcm4che-imageio-codecs-jpeg2000/target/classes;tools/htj2k-interop" Htj2kExchange 202 <source.raw> <temporary-java.j2c> encode 64 64 8 false 3 smooth
-tools/htj2k-interop/bin/Release/net8.0/Interop.exe encode 202 64 64 8 8 3 0 <source.raw> <fixture.j2c>
+tools/fo-dicom-fixtures/htj2k/bin/Release/net8.0/Interop.exe encode 202 64 64 8 8 3 0 <source.raw> <fixture.j2c>
 ```
 
 fo-dicom.Codecs writes 16-bit SIZ precision for 12-bit-in-16-bit input. Its

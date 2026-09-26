@@ -17,7 +17,7 @@ identifiers.
 | `purecodecs_unit8_j2k_lossy.dcm` | 40378 | `.91` | 512x512, unsigned 8-bit YBR_ICT | `892210E45B2F6965C98F58E8A411CA963C967C1952B9278C5DC8754854C9984D` |
 
 Independent pixel baselines were produced with `fo-dicom.Codecs` 5.16.7 in a
-separate .NET 10 process, using `dotnet tools/jpeg2000-interop/bin/Debug/net10.0/Jpeg2000Interop.dll
+separate .NET 10 process, using `dotnet tools/fo-dicom-fixtures/jpeg2000/bin/Debug/net10.0/Jpeg2000Interop.dll
 decode <input.dcm> <output.raw>` from this repository's root:
 
 | DICOM file | Native decoded frame SHA-256 | Java assertion |

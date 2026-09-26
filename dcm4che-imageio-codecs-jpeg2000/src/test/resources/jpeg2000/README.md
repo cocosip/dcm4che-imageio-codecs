@@ -37,9 +37,9 @@ absolute sample difference from this native reference is at most 6.
 | Raw J2K codestream, 260 bytes | `42CBC81A56B249B090BA0CCE560959FD8D94B12657B602DE7BD82270D5D060BB` |
 | Native decoded reference, 4355 bytes | `643361D0D0C9D088DAB6942CC2783AA526C4E8CBAC020CD313A1C1DE0BE812C7` |
 
-From the repository root, `dotnet run --project tools/jpeg2000-interop --
+From the repository root, `dotnet run --project tools/fo-dicom-fixtures/jpeg2000 --
 synthesize <source.dcm>` creates the source dataset, and `dotnet run --project
-tools/jpeg2000-interop -- encode <source.dcm> <frame.j2k> 91 <reference.raw>`
+tools/fo-dicom-fixtures/jpeg2000 -- encode <source.dcm> <frame.j2k> 91 <reference.raw>`
 reproduces the codestream and native reference. The helper is only an
 interoperability tool; the Java codec has no native runtime dependency.
 
@@ -62,7 +62,7 @@ inserted POC marker selecting that sequence. RGN uses Maxshift 2.
 | POC | 4382 | `8B776D885245F37A3E5F6AD41BD932E18B1D5AD260EE5080859EFB75FD8B2B8D` |
 
 Each was independently decoded with `fo-dicom.Codecs` 5.16.7 using
-`dotnet tools/jpeg2000-interop/bin/Debug/net10.0/Jpeg2000Interop.dll verify
+`dotnet tools/fo-dicom-fixtures/jpeg2000/bin/Debug/net10.0/Jpeg2000Interop.dll verify
 <source.dcm> <variant.j2k> 90`. Every variant returned 4355 pixels with
 maximum error 0 and SHA-256
 `EBEFE59C1BFA9785D48ED1A1973978C6BE8CD6FC2B866BCF40218FFBC68C08D7`.

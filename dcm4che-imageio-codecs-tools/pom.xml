@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.github.cocosip</groupId>
+        <artifactId>dcm4che-imageio-codecs-parent</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>dcm4che-imageio-codecs-tools</artifactId>
+    <name>dcm4che ImageIO Codecs - Tools</name>
+    <dependencies>
+        <dependency>
+            <groupId>io.github.cocosip</groupId>
+            <artifactId>dcm4che-imageio-codecs-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.cocosip</groupId>
+            <artifactId>dcm4che-imageio-codecs-rle</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.cocosip</groupId>
+            <artifactId>dcm4che-imageio-codecs-jpeg</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.cocosip</groupId>
+            <artifactId>dcm4che-imageio-codecs-jpegls</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.cocosip</groupId>
+            <artifactId>dcm4che-imageio-codecs-jpeg2000</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <mainClass>io.github.cocosip.dcm4che.imageio.codecs.tools.DicomCompress</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

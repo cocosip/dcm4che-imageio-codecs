@@ -48,6 +48,7 @@
         <module>dcm4che-imageio-codecs-jpeg</module>
         <module>dcm4che-imageio-codecs-jpegls</module>
         <module>dcm4che-imageio-codecs-jpeg2000</module>
+        <module>dcm4che-imageio-codecs-tools</module>
     </modules>
 
     <properties>

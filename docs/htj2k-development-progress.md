@@ -23,7 +23,7 @@ Snapshot date: 2026-09-26
 | HTJ2K design | Available | `docs/htj2k-development-plan.md` defines the scope and release gates. |
 | Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
 | HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has one-pass cleanup, one-layer packets, a one-tile reversible/irreversible encoder, and a multi-tile decoder. Syntax-bound ImageIO reader/writer classes and write parameters exist and have direct-call tests. |
-| HT SPI registration | Enabled for validation | Six syntax-specific providers are registered under exact `.201/.202/.203` names; release remains contingent on the final foreign and malformed-stream matrix. |
+| HT SPI registration | Disabled | Six syntax-specific SPI classes exist, but service files and UID property maps do not register `.201/.202/.203` until the final release matrix passes. |
 | External HT interoperability | `IN_PROGRESS` | Committed OpenJPH 8/16-bit grayscale, RGB CPRL, four-tile RGB, and lossy RGB codestreams pass Java pixel checks. OpenJPH decodes Java `.201/.202` output exactly and `.203` 8/12-bit RGB output within recorded tolerances. Refinement and broader foreign matrix remain open. |
 
 **Implementation progress: 1 of 6 phases complete.** H1 passed its structural
@@ -83,6 +83,12 @@ The fixed cleanup vectors were generated with the local OpenJPH block encoder in
 revision `da3fe114fc918756285ce1f25be265e7b74360a3`). The Java cleanup
 encoder matches those bytes and its decoder recovers the exact coefficients.
 These block vectors do not establish packet or full-codestream interoperability.
+
+A manually constructed 2x2 cleanup/SPP/MRP vector (`FE0063000101`, cleanup
+length 4, refinement length 2, missing MSBs 5, three passes) has Java unit
+coverage for nonzero magnitudes 7 and 3. A broader foreign refinement matrix
+and bit-position/error checks remain open. The C# fo-dicom.Codecs encoder
+currently emits one cleanup pass, so it cannot produce a refinement fixture.
 
 ### H3: `.201` lossless vertical slice
 
@@ -191,7 +197,9 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | 2026-09-26 | H1 | Working tree after `3395fd4` | `mvn test -q`; `Htj2kCodestreamParserTest`; `Htj2kImageIoTest`; existing classic JPEG 2000 tests | Passed. Syntax-bound adapters, CAP/Ccap and Rsiz profile rejection, forbidden markers, and the classic baseline pass in the full reactor. H1 exit gate is complete; SPI release remains separate. |
 | 2026-09-26 | H3/H4 | Working tree after `3395fd4` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `src/test/resources/jpeg2000/htj2k_openjph_gray16.j2c`; `src/test/resources/jpeg2000/htj2k_openjph_rgb128_four_tiles.j2c` | Passed. Java exactly decoded the 594-byte OpenJPH 128x128 unsigned 16-bit grayscale fixture and 12,555-byte four-tile (64x64 tiles) unsigned 8-bit RGB fixture. Both were generated with local OpenJPH revision `da3fe114fc918756285ce1f25be265e7b74360a3`. Refinement and odd-dimension foreign fixtures remain open. |
 | 2026-09-26 | H5/H6 | Working tree after `3395fd4` | `mvn test -q`; direct syntax-bound ImageIO tests; local OpenJPH decoder on Java `.203 targetRatio=2` output | Passed. Ratio-hinted 128x128 RGB stream is 44,469 bytes and OpenJPH maximum component errors are `5/3/5`. Direct ImageIO tests cover `.201` mono/Palette, `.202` planar RGB CPRL with region/subsampling and fragmented input, `.203` RGB tolerance, and cross-syntax parameter rejection. SPI service entries remain disabled. |
-| 2026-09-26 | H2/H6 | Working tree after refinement changes | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am clean test -q`; `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am package -DskipTests -q`; `Htj2kImageIoTest.registersEachTransferSyntaxWithItsOwnSpi` | Passed. Packet headers parse Part 15 pass counts and bounded cleanup/refinement lengths; the compatibility writer remains one cleanup pass. The clean packaged JAR contains all six HTJ2K SPI providers and exact `.201/.202/.203` service/property entries. Refinement foreign vectors and the final release matrix remain open. |
+| 2026-09-26 | H2/H6 | Working tree after refinement changes | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am clean test -q`; `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am package -DskipTests -q`; `mvn test -q` | Passed. Packet headers parse Part 15 pass counts and bounded cleanup/refinement lengths; the compatibility writer remains one cleanup pass. SPI registration was reverted pending foreign refinement vectors and the final release matrix. |
+| 2026-09-26 | H2 | Working tree after `856e575` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q` | Passed. Java tests cover the fixed 2x2 refinement vector, packet segment lengths, and truncated MRP. C# fo-dicom.Codecs interoperability remains to be verified. |
+| 2026-09-26 | H3-H5 | Working tree after `856e575` | `tools/htj2k-interop` Java/C# probe using fo-dicom.Codecs C# API and native package `6.0.0-beta1`; 128x128 unsigned 8-bit deterministic frames | Passed bidirectionally: `.201` grayscale and `.202` RGB differ by 0 sample codes; `.203` RGB maximum absolute error is 3 for Java encode to C# decode and 4 for C# encode to Java decode. C# source assembly came from local fo-dicom.Codecs checkout. This does not cover 12-bit, signed, odd-size, or refinement foreign matrices. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

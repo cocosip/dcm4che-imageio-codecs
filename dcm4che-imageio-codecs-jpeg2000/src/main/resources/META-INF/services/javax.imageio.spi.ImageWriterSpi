@@ -1,5 +1,3 @@
 io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.Jpeg2000LosslessImageWriterSpi
 io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.Jpeg2000LossyImageWriterSpi
-io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.Htj2kLosslessImageWriterSpi
-io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.Htj2kLosslessRpclImageWriterSpi
-io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.Htj2kLossyImageWriterSpi
+# HTJ2K providers remain unregistered until the release matrix passes.

@@ -86,9 +86,12 @@ These block vectors do not establish packet or full-codestream interoperability.
 
 A manually constructed 2x2 cleanup/SPP/MRP vector (`FE0063000101`, cleanup
 length 4, refinement length 2, missing MSBs 5, three passes) has Java unit
-coverage for nonzero magnitudes 7 and 3. A broader foreign refinement matrix
-and bit-position/error checks remain open. The C# fo-dicom.Codecs encoder
-currently emits one cleanup pass, so it cannot produce a refinement fixture.
+coverage for nonzero magnitudes 7 and 3. `Htj2kRefinementExchange` embeds a
+three-pass LL block in a valid 64x64 `.201` codestream; the fo-dicom.Codecs C#
+decoder and Java produce byte-identical 4,096-byte frames. The committed
+codestream and C# pixels are tested by `Htj2kForeignFrameTest`. A broader
+foreign refinement matrix and bit-position/error checks remain open. The C#
+fo-dicom.Codecs encoder currently emits one cleanup pass.
 
 ### H3: `.201` lossless vertical slice
 
@@ -201,6 +204,7 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | 2026-09-26 | H2 | Working tree after `856e575` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q` | Passed. Java tests cover the fixed 2x2 refinement vector, packet segment lengths, and truncated MRP. C# fo-dicom.Codecs interoperability remains to be verified. |
 | 2026-09-26 | H3-H5 | Working tree after `856e575` | `tools/htj2k-interop` Java/C# probe using fo-dicom.Codecs C# API and native package `6.0.0-beta1`; 128x128 unsigned 8-bit deterministic frames | Passed bidirectionally: `.201` grayscale and `.202` RGB differ by 0 sample codes; `.203` RGB maximum absolute error is 3 for Java encode to C# decode and 4 for C# encode to Java decode. C# source assembly came from local fo-dicom.Codecs checkout. This does not cover 12-bit, signed, odd-size, or refinement foreign matrices. |
 | 2026-09-26 | H3-H5 | Working tree after `1a25c65` | `tools/htj2k-interop` Java/C# probe, 129x131 12-bit-in-16-bit frames | `.201` unsigned and signed grayscale exact in both directions. `.203` unsigned grayscale maximum error 1 Java-to-C# and 2 C#-to-Java. Java `.202` unsigned RGB is exact in C#. Java `.203` unsigned RGB has maximum error 2 in C#. C# `.202` 16-bit RGB encoding does not preserve the original color frame: its own decoder and Java decoder agree byte-for-byte on the incorrect output. The fo-dicom.Codecs 16-bit encoder branch reads each component from the same row start, so this reference cannot satisfy the 12-bit RGB C#-to-Java gate. |
+| 2026-09-26 | H2/H3 | Working tree after `370d5c2` | `tools/htj2k-interop/Htj2kRefinementExchange.java`; fo-dicom.Codecs C# `decode 201 64 64 8 8 1 0`; committed `htj2k_refinement_3pass.j2c` and `.raw` | Passed. The Java-generated codestream has a three-pass LL block with a four-byte cleanup and two-byte refinement segment. The C# public codec decoded 4,096 pixels; Java and C# frames have zero differing bytes. This supports the refinement path but does not complete H2 malformed-vector coverage. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

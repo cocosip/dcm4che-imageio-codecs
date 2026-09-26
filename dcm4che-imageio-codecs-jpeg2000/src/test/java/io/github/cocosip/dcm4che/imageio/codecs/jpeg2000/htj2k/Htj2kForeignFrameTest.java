@@ -1,6 +1,7 @@
 package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.htj2k;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -97,5 +98,18 @@ class Htj2kForeignFrameTest {
                 }
             }
         }
+    }
+
+    @Test
+    void decodesThreePassRefinementLikeFoDicomCodecs() throws Exception {
+        byte[] codestream = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_refinement_3pass.j2c").toURI()));
+        byte[] csharpPixels = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_refinement_3pass.raw").toURI()));
+        Jpeg2000Raster decoded = Htj2kFrameCodec.forTransferSyntax(
+                Htj2kFrameCodec.LOSSLESS_UID).decode(codestream);
+        assertEquals(64, decoded.width());
+        assertEquals(64, decoded.height());
+        assertArrayEquals(csharpPixels, decoded.toFrame(false));
     }
 }

@@ -22,9 +22,9 @@ Snapshot date: 2026-09-26
 | --- | --- | --- |
 | HTJ2K design | Available | `docs/htj2k-development-plan.md` defines the scope and release gates. |
 | Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
-| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has structural inspection, bounded MEL/VLC/MagSgn primitives, a one-pass cleanup block encoder/decoder, one-layer packet codec, and a one-tile grayscale reversible frame path. ImageIO adapters are absent. |
+| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has structural inspection, bounded MEL/VLC/MagSgn primitives, a one-pass cleanup block encoder/decoder, one-layer packet codec, and one-tile mono/RGB reversible frame paths with five selectable `.202` progressions. ImageIO adapters are absent. |
 | HT SPI registration | Disabled | Reader/writer service files contain only commented, generic HTJ2K placeholders; no `.201/.202/.203` providers are registered. |
-| External HT interoperability | `IN_PROGRESS` | A committed OpenJPH 128x128 grayscale codestream is decoded with exact Java pixel checks; OpenJPH also decodes a Java-generated grayscale codestream to the expected raw pixels. Color, alternate precision, `.202`, and `.203` remain open. |
+| External HT interoperability | `IN_PROGRESS` | Committed OpenJPH 128x128 grayscale RPCL and RGB CPRL codestreams decode to exact Java pixels. OpenJPH decodes Java grayscale and RGB CPRL output at 8, 12, and signed 16 bits to the expected raw pixels. `.203` and broader foreign matrix remain open. |
 
 **Implementation progress: 0 of 6 phases complete.** H1 is in progress. The
 classic codec remains a prerequisite, not evidence that an HT phase has passed.
@@ -41,7 +41,7 @@ gate pass.
 | H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `IN_PROGRESS` |
 | H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `IN_PROGRESS` |
 | H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `IN_PROGRESS` |
-| H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `NOT_STARTED` |
+| H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `IN_PROGRESS` |
 | H5 | `.203` irreversible path and all-syntax external interoperability | H4 | `NOT_STARTED` |
 | H6 | ImageIO/DICOM integration, hardening, and SPI release | H3-H5 | `NOT_STARTED` |
 
@@ -111,6 +111,13 @@ checks pass, including odd dimensions and malformed structure cases.
 - [ ] Check exact pixels and foreign encode/decode for `.201` color and `.202`,
   including CPRL.
 
+The frame-level `.201/.202` implementation applies RCT for RGB and accepts all
+five `.202` progression orders. Focused tests cover 8/12/16-bit signed and
+unsigned samples and odd dimensions. The OpenJPH RGB CPRL fixture passes exact
+Java pixel comparison, while OpenJPH decoded Java RGB CPRL at 8-bit unsigned,
+12-bit unsigned, and 16-bit signed to byte-identical frames. ImageIO planar,
+Palette Color, YBR normalization, and the remaining external matrix are open.
+
 **Exit gate:** the lossless design matrix and both directions of external pixel
 comparison pass for `.201/.202`.
 
@@ -169,6 +176,7 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | 2026-09-25 | H2 | Working tree | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kCleanupPassTest` vectors from local OpenJPH | 173 tests passed. MEL/VLC/MagSgn primitives and cleanup block encode/decode match recorded OpenJPH bytes and coefficients; refinement and full-frame interoperability remain open. |
 | 2026-09-26 | H3 | Working tree after `a15af20` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kPacketCodecTest` | Passed. One-layer inline packet headers, empty/mixed subbands, and bounded decoding have local tests; no foreign codestream packet or pixel comparison yet. |
 | 2026-09-26 | H3 | Working tree after `f4f06cf` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kForeignFrameTest`; `src/test/resources/jpeg2000/htj2k_openjph_gray128.j2c` | Passed. Java decoded the OpenJPH 128x128 unsigned 8-bit grayscale fixture to 16,384 exact expected pixels. The fixture was generated with local OpenJPH in fo-dicom.Codecs revision `da3fe114fc918756285ce1f25be265e7b74360a3`. OpenJPH decoded Java-generated output (16,129 bytes) to raw pixels with SHA-256 `ED4EF963EBE8FDCF159BBCDCB4E65B583EC1EAAF8F4260EFC7BB2CC50EB4CCA0`; expected raw pixels have the same hash. The OpenJPH fixture is 16,166 bytes. Other precision, color, progression, multi-tile, and ImageIO gates remain open. |
+| 2026-09-26 | H4 | Working tree after `252ff7d` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kForeignFrameTest`; `src/test/resources/jpeg2000/htj2k_openjph_rgb128_cprl.j2c` | Passed. The 11,161-byte 128x128 unsigned 8-bit RGB CPRL fixture was generated with the same local OpenJPH revision; Java matched all 49,152 component samples exactly. OpenJPH decoded Java-generated RGB CPRL streams at 8-bit unsigned (53,718 bytes), 12-bit unsigned (67,245 bytes), and 16-bit signed (22,050 bytes) to byte-identical raw frames. Matching expected/decoded SHA-256 values are respectively `991F1C2FCF1182E8AAFB782F33EC643FB144D7901A102AD88AE410C233EE946C`, `DDD3C920DDD32DCFC6ECE7E647A08C139DAD49A2CA4A92309EB796DC1B65E26A`, and `21686458ACDD399371CA5FCF36963C6CDB715D7C7F155BCC2ECD47170CD70AFD`. This does not complete H4. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

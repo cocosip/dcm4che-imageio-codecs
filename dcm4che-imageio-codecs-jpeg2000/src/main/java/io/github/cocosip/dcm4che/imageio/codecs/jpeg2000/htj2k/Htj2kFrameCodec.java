@@ -6,6 +6,7 @@ import javax.imageio.IIOException;
 import javax.imageio.stream.ImageInputStream;
 
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Limits;
+import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000ProgressionOrder;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Raster;
 
 /** Transfer-syntax-specific entry point for the HT codec family. */
@@ -53,10 +54,19 @@ public final class Htj2kFrameCodec {
     }
 
     public byte[] encode(Jpeg2000Raster raster) throws IOException {
+        return encode(raster, Jpeg2000ProgressionOrder.RPCL);
+    }
+
+    public byte[] encode(Jpeg2000Raster raster,
+            Jpeg2000ProgressionOrder progression) throws IOException {
         if (!reversible) {
             throw new IIOException("HTJ2K lossy frame encoding is not implemented");
         }
-        return Htj2kLosslessFrame.encode(raster);
+        if (progression == null) {
+            throw new NullPointerException("progression");
+        }
+        return Htj2kLosslessFrame.encode(raster,
+                selectableProgression ? progression : Jpeg2000ProgressionOrder.RPCL);
     }
 
     public Jpeg2000Raster decode(byte[] codestream) throws IOException {

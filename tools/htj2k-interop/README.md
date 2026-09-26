@@ -53,6 +53,7 @@ two's-complement codes.
 | `htj2k_fodicom_signed_gray12_201` | `.201` | 129x131 | 16/12 | 1 | yes | 0 low-code difference | `227F08B6BCEED1CE04E602A4808A4E3C9192E7D3C07201D825F5BB6BBF720208` |
 | `htj2k_fodicom_rgb8_202` | `.202` | 64x64 | 8/8 | 3 | no | 0 | `0678A38006A0065AA381DB5E663E2AE95E6B67006686B4B2533A1A32D766031F` |
 | `htj2k_fodicom_rgb8_203` | `.203` | 64x64 | 8/8 | 3 | no | 3 | `FB1F123EACAE6138CB10BD17D236061A967CF811C986938B125FBB7F8266DD40` |
+| `htj2k_fodicom_gray12_203` | `.203` | 129x131 | 16/12 | 1 | no | 2 | `EB9EFFF55BD0BA7E42AD334D4628B850250FF8723AEB6E9E527ADC0C9F7DC61C` |
 
 For example, after building the Java module and this C# tool:
 

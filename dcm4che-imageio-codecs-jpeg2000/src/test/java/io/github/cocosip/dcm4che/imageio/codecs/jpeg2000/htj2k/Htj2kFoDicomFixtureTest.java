@@ -35,6 +35,12 @@ class Htj2kFoDicomFixtureTest {
                 64, 64, 8, 8, 3, false, 4);
     }
 
+    @Test
+    void decodesFoDicomTwelveBitLossyGrayscaleWithinTolerance() throws Exception {
+        assertFixture("htj2k_fodicom_gray12_203", Htj2kFrameCodec.LOSSY_UID,
+                129, 131, 12, 16, 1, false, 3);
+    }
+
     private static void assertFixture(String name, String uid, int width, int height,
             int storedPrecision, int codestreamPrecision, int components, boolean signed,
             int tolerance) throws Exception {

@@ -156,6 +156,22 @@ class Htj2kImageIoTest {
     }
 
     @Test
+    void readsFoDicomTwelveBitLossyFrame() throws Exception {
+        ImageDescriptor descriptor = descriptor(131, 129, 12, false,
+                "MONOCHROME2", 1, false);
+        byte[] encoded = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_fodicom_gray12_203.j2c").toURI()));
+        BufferedImage decoded = decode(Htj2kFrameCodec.LOSSY_UID,
+                encoded, descriptor, null, false);
+        for (int y = 0; y < 131; y++) {
+            for (int x = 0; x < 129; x++) {
+                int expected = (x * 17 + y * 31 + x * y * 3) & 4095;
+                assertTrue(Math.abs(expected - decoded.getRaster().getSample(x, y, 0)) <= 3);
+            }
+        }
+    }
+
+    @Test
     void roundTripsLossyRgbAndRejectsCrossSyntaxParameters() throws Exception {
         ImageDescriptor descriptor = descriptor(35, 37, 8, false, "RGB", 3, false);
         BufferedImage source = image(descriptor);

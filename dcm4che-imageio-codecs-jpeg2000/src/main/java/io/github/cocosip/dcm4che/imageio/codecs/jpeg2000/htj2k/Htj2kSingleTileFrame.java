@@ -14,6 +14,7 @@ import javax.imageio.stream.MemoryCacheImageOutputStream;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000CodestreamWriter;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000ComponentTransform;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Dwt53;
+import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Dwt97;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Geometry;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Limits;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Marker;
@@ -22,40 +23,70 @@ import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Progress
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Raster;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000SizeSegment;
 
-/** One-tile, one-layer reversible HT frame profile. */
-final class Htj2kLosslessFrame {
+/** One-tile, one-layer HT frame assembly for reversible and irreversible transforms. */
+final class Htj2kSingleTileFrame {
     private static final int LEVELS = 5;
     private static final int BLOCK_SIZE = 64;
 
-    private Htj2kLosslessFrame() {
+    private Htj2kSingleTileFrame() {
     }
 
     static byte[] encode(Jpeg2000Raster raster,
             Jpeg2000ProgressionOrder progression) throws IOException {
+        return encode(raster, progression, true);
+    }
+
+    static byte[] encodeLossy(Jpeg2000Raster raster) throws IOException {
+        return encode(raster, Jpeg2000ProgressionOrder.RPCL, false);
+    }
+
+    private static byte[] encode(Jpeg2000Raster raster,
+            Jpeg2000ProgressionOrder progression, boolean reversible) throws IOException {
         if (raster == null) {
             throw new NullPointerException("raster");
         }
         if ((raster.componentCount() != 1 && raster.componentCount() != 3)
                 || raster.precision() < 2
                 || raster.precision() > 16) {
-            throw new IIOException("HTJ2K lossless frame requires one or three 2..16-bit components");
+            throw new IIOException("HTJ2K frame requires one or three 2..16-bit components");
         }
         Jpeg2000Limits limits = Jpeg2000Limits.defaults();
         int components = raster.componentCount();
-        byte[] qcd = Htj2kQuantizer.reversiblePayload(raster.precision(), components, LEVELS);
+        byte[] qcd = reversible
+                ? Htj2kQuantizer.reversiblePayload(raster.precision(), components, LEVELS)
+                : Htj2kQuantizer.irreversiblePayload(raster.precision(), LEVELS);
         Jpeg2000Geometry.Tile tile = geometry(raster.width(), raster.height(), components, limits);
         int[][] samples = new int[components][];
         for (int c = 0; c < components; c++) {
             samples[c] = raster.levelShiftedComponent(c);
         }
-        if (components == 3) {
+        if (components == 3 && reversible) {
             samples = Jpeg2000ComponentTransform.forwardReversible(
                     samples[0], samples[1], samples[2], limits);
         }
         int[][] transformed = new int[components][];
-        for (int c = 0; c < components; c++) {
-            transformed[c] = Jpeg2000Dwt53.forward(samples[c],
-                    raster.width(), raster.height(), LEVELS, 0, 0, limits);
+        if (reversible) {
+            for (int c = 0; c < components; c++) {
+                transformed[c] = Jpeg2000Dwt53.forward(samples[c],
+                        raster.width(), raster.height(), LEVELS, 0, 0, limits);
+            }
+        } else {
+            double[][] values = new double[components][];
+            if (components == 3) {
+                values = Jpeg2000ComponentTransform.forwardIrreversible(
+                        samples[0], samples[1], samples[2], limits);
+            } else {
+                values[0] = new double[samples[0].length];
+                for (int i = 0; i < samples[0].length; i++) {
+                    values[0][i] = samples[0][i];
+                }
+            }
+            for (int c = 0; c < components; c++) {
+                values[c] = Jpeg2000Dwt97.forward(values[c], raster.width(),
+                        raster.height(), LEVELS, 0, 0, limits);
+                transformed[c] = quantize(values[c], raster.width(),
+                        tile.components().get(c), qcd, raster.precision());
+            }
         }
         ByteArrayOutputStream[] parts = new ByteArrayOutputStream[LEVELS + 1];
         for (int r = 0; r < parts.length; r++) {
@@ -76,8 +107,8 @@ final class Htj2kLosslessFrame {
                 if (blocks.isEmpty()) {
                     continue;
                 }
-                int kmax = Htj2kQuantizer.kmax(qcd, coordinate.resolution(),
-                        band.orientation().ordinal());
+                int kmax = kmax(qcd, coordinate.resolution(),
+                        band.orientation().ordinal(), reversible);
                 List<Htj2kPacketCodec.Contribution> contributions =
                         new ArrayList<Htj2kPacketCodec.Contribution>();
                 for (Jpeg2000Geometry.CodeBlock block : blocks) {
@@ -103,10 +134,20 @@ final class Htj2kLosslessFrame {
                     : (int) ((long) packetIndex * parts.length / coordinates.size());
             parts[partIndex].write(packet, 0, packet.length);
         }
-        return writeCodestream(raster, progression, qcd, parts, limits);
+        return writeCodestream(raster, progression, qcd, parts, limits, reversible);
     }
 
     static Jpeg2000Raster decode(byte[] bytes, Htj2kFrameCodec codec) throws IOException {
+        return decode(bytes, codec, true);
+    }
+
+    static Jpeg2000Raster decodeLossy(byte[] bytes, Htj2kFrameCodec codec)
+            throws IOException {
+        return decode(bytes, codec, false);
+    }
+
+    private static Jpeg2000Raster decode(byte[] bytes, Htj2kFrameCodec codec,
+            boolean reversible) throws IOException {
         if (bytes == null) {
             throw new NullPointerException("bytes");
         }
@@ -116,8 +157,8 @@ final class Htj2kLosslessFrame {
                 new ByteArrayInputStream(bytes)), bytes.length, limits);
         Jpeg2000SizeSegment size = stream.size();
         int components = size.components().size();
-        if (size.tileCount() != 1 || !stream.reversible()) {
-            throw new IIOException("HTJ2K lossless decoder requires one reversible tile");
+        if (size.tileCount() != 1 || stream.reversible() != reversible) {
+            throw new IIOException("HTJ2K decoder requires one tile with the requested transform");
         }
         Jpeg2000SizeSegment.Component component = size.components().get(0);
         for (Jpeg2000SizeSegment.Component current : size.components()) {
@@ -131,7 +172,7 @@ final class Htj2kLosslessFrame {
         if (component.separationX() != 1 || component.separationY() != 1
                 || cod[0] != 0 || (cod[5] & 0xff) != LEVELS
                 || (cod[6] & 0xff) != 4 || (cod[7] & 0xff) != 4) {
-            throw new IIOException("Unsupported HTJ2K grayscale geometry or packet markers");
+            throw new IIOException("Unsupported HTJ2K geometry or packet markers");
         }
         int width = Math.toIntExact(size.referenceGridWidth() - size.imageOffsetX());
         int height = Math.toIntExact(size.referenceGridHeight() - size.imageOffsetY());
@@ -166,8 +207,8 @@ final class Htj2kLosslessFrame {
             position += packet.bytesConsumed;
             for (int bandIndex = 0; bandIndex < bands.size(); bandIndex++) {
                 Jpeg2000Geometry.PrecinctSubband band = bands.get(bandIndex);
-                int kmax = Htj2kQuantizer.kmax(qcd, coordinate.resolution(),
-                        band.orientation().ordinal());
+                int kmax = kmax(qcd, coordinate.resolution(),
+                        band.orientation().ordinal(), reversible);
                 for (int blockIndex = 0; blockIndex < band.codeBlocks().size(); blockIndex++) {
                     Htj2kPacketCodec.Contribution contribution =
                             packet.bands.get(bandIndex).blocks.get(blockIndex);
@@ -189,20 +230,43 @@ final class Htj2kLosslessFrame {
             throw new IIOException("HTJ2K tile-part packet data has trailing bytes");
         }
         int[][] samples = new int[components][];
-        for (int c = 0; c < components; c++) {
-            samples[c] = Jpeg2000Dwt53.inverse(coefficients[c], width, height,
-                    LEVELS, 0, 0, limits);
-        }
-        if (stream.multipleComponentTransform()) {
-            samples = Jpeg2000ComponentTransform.inverseReversible(
-                    samples[0], samples[1], samples[2], limits);
-        }
-        if (!component.signed()) {
-            int shift = 1 << (component.precision() - 1);
-            for (int[] plane : samples) {
-                for (int i = 0; i < plane.length; i++) {
-                    plane[i] += shift;
+        if (reversible) {
+            for (int c = 0; c < components; c++) {
+                samples[c] = Jpeg2000Dwt53.inverse(coefficients[c], width, height,
+                        LEVELS, 0, 0, limits);
+            }
+            if (stream.multipleComponentTransform()) {
+                samples = Jpeg2000ComponentTransform.inverseReversible(
+                        samples[0], samples[1], samples[2], limits);
+            }
+        } else {
+            double[][] values = new double[components][];
+            for (int c = 0; c < components; c++) {
+                double[] wavelet = dequantize(coefficients[c], width,
+                        tile.components().get(c), qcd, component.precision());
+                values[c] = Jpeg2000Dwt97.inverse(wavelet, width, height,
+                        LEVELS, 0, 0, limits);
+            }
+            if (stream.multipleComponentTransform()) {
+                samples = Jpeg2000ComponentTransform.inverseIrreversible(
+                        values[0], values[1], values[2], limits);
+            } else {
+                for (int c = 0; c < components; c++) {
+                    samples[c] = new int[values[c].length];
+                    for (int i = 0; i < values[c].length; i++) {
+                        samples[c][i] = (int) Math.round(values[c][i]);
+                    }
                 }
+            }
+        }
+        int shift = component.signed() ? 0 : 1 << (component.precision() - 1);
+        int minimum = component.signed() ? -(1 << (component.precision() - 1)) : 0;
+        int maximum = component.signed() ? (1 << (component.precision() - 1)) - 1
+                : (1 << component.precision()) - 1;
+        for (int[] plane : samples) {
+            for (int i = 0; i < plane.length; i++) {
+                int value = plane[i] + shift;
+                plane[i] = reversible ? value : Math.max(minimum, Math.min(maximum, value));
             }
         }
         return Jpeg2000Raster.of(width, height,
@@ -213,20 +277,22 @@ final class Htj2kLosslessFrame {
 
     private static byte[] writeCodestream(Jpeg2000Raster raster,
             Jpeg2000ProgressionOrder progression, byte[] qcd,
-            ByteArrayOutputStream[] parts, Jpeg2000Limits limits) throws IOException {
+            ByteArrayOutputStream[] parts, Jpeg2000Limits limits,
+            boolean reversible) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(bytes);
         Jpeg2000CodestreamWriter writer = new Jpeg2000CodestreamWriter(output, limits);
         writer.writeStandalone(Jpeg2000Marker.SOC);
         writer.writeSegment(Jpeg2000Marker.SIZ, sizePayload(raster));
-        int ccap = Htj2kQuantizer.reversibleCcap15(qcd);
+        int ccap = reversible ? Htj2kQuantizer.reversibleCcap15(qcd)
+                : Htj2kQuantizer.irreversibleCcap15(qcd);
         writer.writeSegment(Jpeg2000Marker.CAP, new byte[] {
                 0, 2, 0, 0, (byte) (ccap >>> 8), (byte) ccap
         });
         writer.writeSegment(Jpeg2000Marker.COD, new byte[] {
                 0, (byte) progression.code(), 0, 1,
                 (byte) (raster.componentCount() == 3 ? 1 : 0),
-                LEVELS, 4, 4, 0x40, 1
+                LEVELS, 4, 4, 0x40, (byte) (reversible ? 1 : 0)
         });
         writer.writeSegment(Jpeg2000Marker.QCD, qcd);
         byte[] tlm = new byte[2 + 4 * parts.length];
@@ -257,6 +323,64 @@ final class Htj2kLosslessFrame {
         output.flush();
         limits.requireFrameLength(bytes.size());
         return bytes.toByteArray();
+    }
+
+    private static int kmax(byte[] qcd, int resolution, int orientation,
+            boolean reversible) throws IIOException {
+        return reversible ? Htj2kQuantizer.kmax(qcd, resolution, orientation)
+                : Htj2kQuantizer.irreversibleKmax(qcd, resolution, orientation);
+    }
+
+    private static int[] quantize(double[] wavelet, int stride,
+            Jpeg2000Geometry.Component component, byte[] qcd, int precision)
+            throws IIOException {
+        int[] result = new int[wavelet.length];
+        for (int resolution = 0; resolution < component.resolutions().size(); resolution++) {
+            for (Jpeg2000Geometry.Precinct precinct :
+                    component.resolutions().get(resolution).precincts()) {
+                for (Jpeg2000Geometry.PrecinctSubband band : precinct.subbands()) {
+                    double step = Htj2kQuantizer.irreversibleStep(qcd, resolution,
+                            band.orientation().ordinal(), precision);
+                    for (Jpeg2000Geometry.CodeBlock block : band.codeBlocks()) {
+                        for (int y = block.offsetY(); y < block.offsetY() + block.bounds().height(); y++) {
+                            for (int x = block.offsetX(); x < block.offsetX() + block.bounds().width(); x++) {
+                                int index = y * stride + x;
+                                double magnitude = Math.floor(Math.abs(wavelet[index]) / step);
+                                if (!Double.isFinite(magnitude) || magnitude > Integer.MAX_VALUE) {
+                                    throw new IIOException("HT irreversible coefficient exceeds Java range");
+                                }
+                                result[index] = (int) Math.copySign(magnitude, wavelet[index]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private static double[] dequantize(int[] coefficients, int stride,
+            Jpeg2000Geometry.Component component, byte[] qcd, int precision)
+            throws IIOException {
+        double[] result = new double[coefficients.length];
+        for (int resolution = 0; resolution < component.resolutions().size(); resolution++) {
+            for (Jpeg2000Geometry.Precinct precinct :
+                    component.resolutions().get(resolution).precincts()) {
+                for (Jpeg2000Geometry.PrecinctSubband band : precinct.subbands()) {
+                    double step = Htj2kQuantizer.irreversibleStep(qcd, resolution,
+                            band.orientation().ordinal(), precision);
+                    for (Jpeg2000Geometry.CodeBlock block : band.codeBlocks()) {
+                        for (int y = block.offsetY(); y < block.offsetY() + block.bounds().height(); y++) {
+                            for (int x = block.offsetX(); x < block.offsetX() + block.bounds().width(); x++) {
+                                int index = y * stride + x;
+                                result[index] = coefficients[index] * step;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     private static byte[] sizePayload(Jpeg2000Raster raster) throws IOException {

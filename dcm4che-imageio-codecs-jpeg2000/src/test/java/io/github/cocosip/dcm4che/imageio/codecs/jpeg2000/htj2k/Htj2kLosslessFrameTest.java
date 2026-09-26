@@ -3,6 +3,7 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.htj2k;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 
@@ -26,11 +27,35 @@ class Htj2kLosslessFrameTest {
     }
 
     @Test
-    void rejectsLossyCallUntilItsFramePathExists() throws Exception {
+    void roundTripsLossyGrayscaleWithinTolerance() throws Exception {
         Htj2kFrameCodec lossy = Htj2kFrameCodec.forTransferSyntax(
                 Htj2kFrameCodec.LOSSY_UID);
-        assertThrows(IIOException.class, () -> lossy.encode(raster(1, 1, 8, false)));
+        Jpeg2000Raster expected = raster(65, 67, 8, false);
+        byte[] codestream = lossy.encode(expected);
+        Jpeg2000Raster decoded = lossy.decode(codestream);
+        int[] source = expected.component(0);
+        int[] actual = decoded.component(0);
+        for (int i = 0; i < source.length; i++) {
+            assertTrue(Math.abs(source[i] - actual[i]) <= 12,
+                    "lossy pixel " + i + ": " + source[i] + " vs " + actual[i]);
+        }
         assertThrows(IIOException.class, () -> lossy.decode(new byte[0]));
+    }
+
+    @Test
+    void roundTripsLossyColorAtTwelveBitsWithinTolerance() throws Exception {
+        Htj2kFrameCodec codec = Htj2kFrameCodec.forTransferSyntax(
+                Htj2kFrameCodec.LOSSY_UID);
+        Jpeg2000Raster expected = colorRaster(65, 67, 12, false);
+        Jpeg2000Raster decoded = codec.decode(codec.encode(expected));
+        for (int c = 0; c < 3; c++) {
+            int[] source = expected.component(c);
+            int[] actual = decoded.component(c);
+            for (int i = 0; i < source.length; i++) {
+                assertTrue(Math.abs(source[i] - actual[i]) <= 12,
+                        "component " + c + " lossy pixel " + i);
+            }
+        }
     }
 
     @Test

@@ -14,8 +14,8 @@ final class Htj2kPacketCodec {
     }
 
     static byte[] encode(List<Band> bands) throws IIOException {
-        if (bands == null || bands.isEmpty() || bands.size() > 3) {
-            throw new IllegalArgumentException("HT packet needs one to three bands");
+        if (bands == null || bands.size() > 3) {
+            throw new IllegalArgumentException("HT packet needs zero to three bands");
         }
         Htj2kPacketBits.Writer header = new Htj2kPacketBits.Writer();
         boolean present = false;
@@ -74,13 +74,27 @@ final class Htj2kPacketCodec {
     }
 
     static List<Band> decode(byte[] packet, List<int[]> bandSizes) throws IIOException {
-        if (packet == null || packet.length == 0 || bandSizes == null
-                || bandSizes.isEmpty() || bandSizes.size() > 3) {
+        Decoded decoded = decodeNext(packet, 0, packet == null ? 0 : packet.length,
+                bandSizes);
+        if (decoded.bytesConsumed != packet.length) {
+            throw new IIOException("HT packet has trailing bytes");
+        }
+        return decoded.bands;
+    }
+
+    static Decoded decodeNext(byte[] packet, int offset, int end,
+            List<int[]> bandSizes) throws IIOException {
+        if (packet == null || offset < 0 || end <= offset || end > packet.length
+                || bandSizes == null
+                || bandSizes.size() > 3) {
             throw new IIOException("Invalid HT packet data or band layout");
         }
         Htj2kPacketBits.Reader header = new Htj2kPacketBits.Reader(
-                packet, 0, packet.length);
+                packet, offset, end - offset);
         boolean present = header.bit() != 0;
+        if (present && bandSizes.isEmpty()) {
+            throw new IIOException("HT packet has data without a subband");
+        }
         List<Band> result = new ArrayList<Band>();
         List<int[]> lengths = new ArrayList<int[]>();
         int total = 0;
@@ -115,7 +129,7 @@ final class Htj2kPacketCodec {
                     }
                 }
                 int length = header.bits(3 + extra);
-                if (length < 2 || length > 32768 || total > packet.length - length) {
+                if (length < 2 || length > 32768 || total > end - offset - length) {
                     throw new IIOException("Invalid HT packet cleanup length");
                 }
                 total += length;
@@ -126,8 +140,8 @@ final class Htj2kPacketCodec {
             result.add(new Band(size[0], size[1], blocks));
         }
         header.align();
-        int position = header.bytesRead();
-        if (position + total != packet.length) {
+        int position = offset + header.bytesRead();
+        if (total > end - position) {
             throw new IIOException("HT packet header/body length mismatch");
         }
         List<Band> decoded = new ArrayList<Band>();
@@ -142,7 +156,7 @@ final class Htj2kPacketCodec {
             }
             decoded.add(new Band(band.width, band.height, blocks));
         }
-        return Collections.unmodifiableList(decoded);
+        return new Decoded(Collections.unmodifiableList(decoded), position - offset);
     }
 
     static final class Band {
@@ -172,6 +186,16 @@ final class Htj2kPacketCodec {
             }
             this.missingMsbs = missingMsbs;
             this.data = data.clone();
+        }
+    }
+
+    static final class Decoded {
+        final List<Band> bands;
+        final int bytesConsumed;
+
+        private Decoded(List<Band> bands, int bytesConsumed) {
+            this.bands = bands;
+            this.bytesConsumed = bytesConsumed;
         }
     }
 }

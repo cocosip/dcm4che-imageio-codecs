@@ -27,6 +27,8 @@ class Htj2kPacketCodecTest {
 
     @Test
     void emptyAndMixedBandsKeepPacketBoundaries() throws Exception {
+        assertArrayEquals(hex("00"), Htj2kPacketCodec.encode(Collections.emptyList()));
+        assertEquals(0, Htj2kPacketCodec.decode(hex("00"), Collections.emptyList()).size());
         Htj2kPacketCodec.Band empty = band(1, 1, block(0, new byte[0]));
         assertArrayEquals(hex("00"), Htj2kPacketCodec.encode(
                 Collections.singletonList(empty)));
@@ -48,6 +50,23 @@ class Htj2kPacketCodecTest {
                 Collections.singletonList(new int[] {1, 1})));
         assertThrows(IIOException.class, () -> Htj2kPacketCodec.decode(hex("F0"),
                 Collections.singletonList(new int[] {1, 1})));
+    }
+
+    @Test
+    void readsOnePacketFromAConcatenatedTilePart() throws Exception {
+        byte[] first = Htj2kPacketCodec.encode(Collections.singletonList(
+                band(1, 1, block(7, hex("FE006300")))));
+        byte[] second = Htj2kPacketCodec.encode(Collections.singletonList(
+                band(1, 1, block(0, new byte[0]))));
+        byte[] joined = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, joined, first.length, second.length);
+        List<int[]> shape = Collections.singletonList(new int[] {1, 1});
+        Htj2kPacketCodec.Decoded decoded = Htj2kPacketCodec.decodeNext(
+                joined, 0, joined.length, shape);
+        assertEquals(first.length, decoded.bytesConsumed);
+        assertArrayEquals(hex("FE006300"), decoded.bands.get(0).blocks.get(0).data);
+        assertEquals(second.length, Htj2kPacketCodec.decodeNext(
+                joined, first.length, joined.length, shape).bytesConsumed);
     }
 
     private static Htj2kPacketCodec.Band band(int width, int height,

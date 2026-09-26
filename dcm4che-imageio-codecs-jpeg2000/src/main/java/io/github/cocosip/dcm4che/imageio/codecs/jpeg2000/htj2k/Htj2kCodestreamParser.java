@@ -70,6 +70,8 @@ final class Htj2kCodestreamParser {
         boolean hasCap = false;
         int ccap15 = -1;
         CodingStyle coding = null;
+        byte[] codingPayload = null;
+        byte[] quantizationPayload = null;
         boolean hasQcd = false;
         int nextTlmIndex = 0;
         List<TileLength> tileLengths = new ArrayList<TileLength>();
@@ -88,12 +90,14 @@ final class Htj2kCodestreamParser {
                         throw error(segment, "duplicate COD");
                     }
                     coding = parseCoding(segment, size);
+                    codingPayload = segment.payload();
                     break;
                 case Jpeg2000Marker.QCD:
                     if (coding == null || hasQcd) {
                         throw error(segment, "QCD requires one preceding COD and may occur only once");
                     }
                     validateQuantization(segment, coding);
+                    quantizationPayload = segment.payload();
                     hasQcd = true;
                     break;
                 case Jpeg2000Marker.TLM:
@@ -121,6 +125,7 @@ final class Htj2kCodestreamParser {
         }
 
         Map<Integer, TileState> states = new HashMap<Integer, TileState>();
+        List<Htj2kCodestream.TilePart> tileParts = new ArrayList<Htj2kCodestream.TilePart>();
         int partCount = 0;
         while (segment.marker() == Jpeg2000Marker.SOT) {
             if (partCount == MAX_TILE_PARTS) {
@@ -173,6 +178,11 @@ final class Htj2kCodestreamParser {
             if (dataLength < 0) {
                 throw error(segment, "Psot is shorter than its tile-part header");
             }
+            if (dataLength > Integer.MAX_VALUE || reader.position() > Integer.MAX_VALUE) {
+                throw error(segment, "tile-part data exceeds Java array limits");
+            }
+            tileParts.add(new Htj2kCodestream.TilePart(start.tileIndex(),
+                    start.tilePartIndex(), (int) reader.position(), (int) dataLength));
             reader.skipRaw(dataLength, "HT tile-part data");
             partCount++;
             segment = reader.readNext();
@@ -198,7 +208,8 @@ final class Htj2kCodestreamParser {
             throw error(segment, "unexpected bytes after EOC");
         }
         return new Htj2kCodestream(size, coding.progression, coding.reversible,
-                coding.mct, partCount, logicalLength);
+                coding.mct, partCount, logicalLength, codingPayload,
+                quantizationPayload, tileParts);
     }
 
     private int parseCap(Jpeg2000MarkerSegment segment) throws IIOException {

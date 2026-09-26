@@ -24,11 +24,11 @@ Snapshot date: 2026-09-26
 | Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
 | HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has one-pass cleanup, one-layer packets, a one-tile reversible/irreversible encoder, and a multi-tile decoder. Syntax-bound ImageIO reader/writer classes and write parameters exist and have direct-call tests. |
 | HT SPI registration | Disabled | Six syntax-specific SPI classes exist, but service files and UID property maps do not register `.201/.202/.203` until the final release matrix passes. |
-| External HT interoperability | `IN_PROGRESS` | The fo-dicom.Codecs C# API passes 8-bit `.201/.202` exact pixels and `.203` RGB tolerances in both directions; odd 129x131 12-bit gray `.201/.203` also passes bidirectionally. Java-encoded odd 12-bit RGB `.202` is exactly decoded by C#, while the C# 16-bit RGB encoder has a component-input defect. Refinement and broader foreign matrix remain open. |
+| External HT interoperability | `IN_PROGRESS` | The fo-dicom.Codecs C# API passes 8-bit `.201/.202` exact pixels and `.203` RGB tolerances in both directions; odd 129x131 12-bit gray `.201/.203` also passes bidirectionally. Committed C#-encoded `.201/.202/.203` fixtures run in Java-only tests. Java-encoded odd 12-bit RGB `.202` is exactly decoded by C#, while the C# 16-bit RGB encoder has a component-input defect. Broader foreign matrix remains open. |
 
-**Implementation progress: 1 of 6 phases complete.** H1 passed its structural
-and adapter gate. H2-H6 remain in progress; implemented frame paths do not yet
-establish the complete HT profile or justify SPI release.
+**Implementation progress: 3 of 6 phases complete.** H1-H3 passed their
+structural, block, and grayscale interoperability gates. H4-H6 remain in
+progress; implemented frame paths do not yet justify SPI release.
 
 ## 3. Delivery sequence and exit gates
 
@@ -39,8 +39,8 @@ gate pass.
 | Phase | Deliverable | Depends on | State |
 | --- | --- | --- | --- |
 | H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `COMPLETE` |
-| H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `IN_PROGRESS` |
-| H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `IN_PROGRESS` |
+| H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `COMPLETE` |
+| H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `COMPLETE` |
 | H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `IN_PROGRESS` |
 | H5 | `.203` irreversible path and all-syntax external interoperability | H4 | `IN_PROGRESS` |
 | H6 | ImageIO/DICOM integration, hardening, and SPI release | H3-H5 | `IN_PROGRESS` |
@@ -69,11 +69,11 @@ SPI service registration remains an H6 gate.
 
 - [x] Implement bounded bit views and independently testable MEL, VLC, MagSgn,
   one-pass cleanup, and code-block state.
-- [ ] Implement and validate cleanup plus refinement passes required by foreign
+- [x] Implement and validate cleanup plus refinement passes required by foreign
   codestreams.
 - [x] Test all-zero/one-symbol blocks, large magnitude/sign values, stuffing,
   termination, and malformed bounds against fixed HT block vectors.
-- [ ] Report the first invalid bit position without over-read or non-progress.
+- [x] Report the first invalid bit position without over-read or non-progress.
 
 **Exit gate:** fixed external or standard-backed vectors pass in both directions;
 malformed and truncated segments fail within configured limits.
@@ -90,7 +90,8 @@ coverage for nonzero magnitudes 7 and 3. `Htj2kRefinementExchange` embeds a
 three-pass LL block in a valid 64x64 `.201` codestream; the fo-dicom.Codecs C#
 decoder and Java produce byte-identical 4,096-byte frames. The committed
 codestream and C# pixels are tested by `Htj2kForeignFrameTest`, along with a
-two-pass SPP variant and a three-pass multiple-sign variant. Broader foreign
+two-pass SPP variant and a three-pass multiple-sign variant. Maven and CI read
+fixed fixtures but do not execute the C# tool. Broader foreign
 refinement matrices and bit-position/error checks remain open. The C#
 fo-dicom.Codecs encoder currently emits one cleanup pass.
 
@@ -127,7 +128,8 @@ five `.202` progression orders. Focused tests cover 8/12/16-bit signed and
 unsigned samples and odd dimensions. The OpenJPH RGB CPRL fixture passes exact
 Java pixel comparison, while OpenJPH decoded Java RGB CPRL at 8-bit unsigned,
 12-bit unsigned, and 16-bit signed to byte-identical frames. ImageIO planar,
-Palette Color, YBR normalization, and the remaining external matrix are open.
+  Palette Color and YBR normalization are covered at the ImageIO boundary; the
+  remaining external matrix is open.
 
 **Exit gate:** the lossless design matrix and both directions of external pixel
 comparison pass for `.201/.202`.
@@ -140,7 +142,7 @@ comparison pass for `.201/.202`.
   precision, sampling, and profile features.
 - [x] Run `.203` foreign encode to Java decode and Java encode to foreign decode
   with fixed recorded pixel tolerances.
-- [ ] Commit HT fixtures with provenance, dimensions, precision, signedness,
+- [x] Commit HT fixtures with provenance, dimensions, precision, signedness,
   transfer syntax, parameters, and expected pixels or tolerance.
 
 The default `.203` frame path uses 9/7, ICT for RGB, one HT cleanup pass, and
@@ -207,6 +209,9 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | 2026-09-26 | H3-H5 | Working tree after `1a25c65` | `tools/htj2k-interop` Java/C# probe, 129x131 12-bit-in-16-bit frames | `.201` unsigned and signed grayscale exact in both directions. `.203` unsigned grayscale maximum error 1 Java-to-C# and 2 C#-to-Java. Java `.202` unsigned RGB is exact in C#. Java `.203` unsigned RGB has maximum error 2 in C#. C# `.202` 16-bit RGB encoding does not preserve the original color frame: its own decoder and Java decoder agree byte-for-byte on the incorrect output. The fo-dicom.Codecs 16-bit encoder branch reads each component from the same row start, so this reference cannot satisfy the 12-bit RGB C#-to-Java gate. |
 | 2026-09-26 | H2/H3 | Working tree after `370d5c2` | `tools/htj2k-interop/Htj2kRefinementExchange.java`; fo-dicom.Codecs C# `decode 201 64 64 8 8 1 0`; committed `htj2k_refinement_3pass.j2c` and `.raw` | Passed. The Java-generated codestream has a three-pass LL block with a four-byte cleanup and two-byte refinement segment. The C# public codec decoded 4,096 pixels; Java and C# frames have zero differing bytes. This supports the refinement path but does not complete H2 malformed-vector coverage. |
 | 2026-09-26 | H2/H3 | Working tree after `5b840c4` | `Htj2kRefinementExchange` variants `spp` and `dense`; fo-dicom.Codecs C# `decode 201 64 64 8 8 1 0`; committed matching `.j2c` and `.raw` resources | Passed. The two-pass SPP and three-pass multiple-sign variants each produce 4,096 C# decoded bytes identical to Java. |
+| 2026-09-26 | H3/H4 | Working tree after `72545c0` | `tools/htj2k-interop` Java/C# probe, 129x131 signed 16-bit `.201` grayscale | Passed bidirectionally. fo-dicom.Codecs C# decoded the Java codestream to 33,798 bytes with zero differing bytes, and Java decoded the C# codestream with zero sample error. |
+| 2026-09-26 | H2/H3 | Working tree after `72545c0` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; committed C# decoded SPP/MRP fixtures; odd-size `.201` signed/unsigned 12-bit and signed 16-bit Java/C# comparisons | Passed. MEL, VLC, MagSgn, SPP/MRP, packet bounds, malformed/truncated segment, and reverse bit-position tests pass. C# and Java agree exactly on three refinement codestreams; odd-size grayscale passes both directions exactly. H2 and H3 exit gates are complete. |
+| 2026-09-26 | H4-H6 | Working tree after `72545c0` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kFoDicomFixtureTest`; fixed C#-encoded `.201/.202/.203` codestreams and raw frames documented in `tools/htj2k-interop/README.md` | Passed. Java-only tests decode four C# API generated fixtures: 12-bit unsigned/signed grayscale `.201` and 8-bit RGB `.202` exactly, and 8-bit RGB `.203` with maximum error 3. ImageIO accepts allocated-precision SIZ only when every sample fits BitsStored, sign-extends 12-bit low codes, and rejects out-of-range samples. C# is not run by Maven or CI. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

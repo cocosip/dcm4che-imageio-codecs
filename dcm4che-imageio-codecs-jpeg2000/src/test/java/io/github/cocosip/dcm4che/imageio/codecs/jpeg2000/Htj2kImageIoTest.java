@@ -9,6 +9,8 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Arrays;
 
 import javax.imageio.IIOImage;
@@ -26,6 +28,8 @@ import org.junit.jupiter.api.Test;
 
 import io.github.cocosip.dcm4che.imageio.codecs.core.image.DicomImageTypes;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000ProgressionOrder;
+import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Limits;
+import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Raster;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.htj2k.Htj2kFrameCodec;
 
 class Htj2kImageIoTest {
@@ -71,6 +75,84 @@ class Htj2kImageIoTest {
                 }
             }
         }
+    }
+
+    @Test
+    void normalizesFullRangeYbrAtTheImageIoBoundary() throws Exception {
+        for (String photometric : new String[] {"YBR_FULL", "YBR_FULL_422"}) {
+            ImageDescriptor descriptor = descriptor(2, 4, 8, false,
+                    photometric, 3, false);
+            BufferedImage source = DicomImageTypes.createImage(descriptor);
+            for (int y = 0; y < 2; y++) {
+                for (int x = 0; x < 4; x++) {
+                    source.getRaster().setSample(x, y, 0, 80 + x * 20 + y * 5);
+                    source.getRaster().setSample(x, y, 1, 128);
+                    source.getRaster().setSample(x, y, 2, 128);
+                }
+            }
+            byte[] encoded = encode(Htj2kFrameCodec.LOSSLESS_UID,
+                    descriptor, source, null);
+            BufferedImage decoded = decode(Htj2kFrameCodec.LOSSLESS_UID,
+                    encoded, descriptor, null, false);
+            for (int y = 0; y < 2; y++) {
+                for (int x = 0; x < 4; x++) {
+                    for (int c = 0; c < 3; c++) {
+                        assertEquals(80 + x * 20 + y * 5,
+                                decoded.getRaster().getSample(x, y, c));
+                    }
+                }
+            }
+            assertEquals(photometric,
+                    String.valueOf(descriptor.getPhotometricInterpretation()));
+        }
+    }
+
+    @Test
+    void readsFoDicomTwelveBitFrameWithAllocatedPrecisionInSiz() throws Exception {
+        ImageDescriptor descriptor = descriptor(131, 129, 12, false,
+                "MONOCHROME2", 1, false);
+        byte[] encoded = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_fodicom_gray12_201.j2c").toURI()));
+        BufferedImage decoded = decode(Htj2kFrameCodec.LOSSLESS_UID,
+                encoded, descriptor, null, false);
+        for (int y = 0; y < 131; y++) {
+            for (int x = 0; x < 129; x++) {
+                assertEquals((x * 17 + y * 31 + x * y * 3) & 4095,
+                        decoded.getRaster().getSample(x, y, 0));
+            }
+        }
+    }
+
+    @Test
+    void signExtendsFoDicomTwelveBitSamplesAtTheImageIoBoundary() throws Exception {
+        ImageDescriptor descriptor = descriptor(131, 129, 12, true,
+                "MONOCHROME2", 1, false);
+        byte[] encoded = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_fodicom_signed_gray12_201.j2c").toURI()));
+        BufferedImage decoded = decode(Htj2kFrameCodec.LOSSLESS_UID,
+                encoded, descriptor, null, false);
+        for (int y = 0; y < 131; y++) {
+            for (int x = 0; x < 129; x++) {
+                int code = (x * 17 + y * 31 + x * y * 3) & 4095;
+                int expected = (code & 2048) == 0 ? code : code - 4096;
+                assertEquals(expected, decoded.getRaster().getSample(x, y, 0));
+            }
+        }
+    }
+
+    @Test
+    void rejectsAllocatedPrecisionSamplesOutsideBitsStored() throws Exception {
+        ImageDescriptor descriptor = descriptor(2, 2, 12, false,
+                "MONOCHROME2", 1, false);
+        Jpeg2000Raster foreign = Jpeg2000Raster.of(2, 2, 16, 16, false,
+                "MONOCHROME2", new int[][] {{0, 1, 4096, 2}},
+                Jpeg2000Limits.defaults());
+        byte[] encoded = Htj2kFrameCodec.forTransferSyntax(
+                Htj2kFrameCodec.LOSSLESS_UID).encode(foreign);
+        IIOException failure = assertThrows(IIOException.class,
+                () -> decode(Htj2kFrameCodec.LOSSLESS_UID,
+                        encoded, descriptor, null, false));
+        assertTrue(failure.getMessage().contains("BitsStored"));
     }
 
     @Test

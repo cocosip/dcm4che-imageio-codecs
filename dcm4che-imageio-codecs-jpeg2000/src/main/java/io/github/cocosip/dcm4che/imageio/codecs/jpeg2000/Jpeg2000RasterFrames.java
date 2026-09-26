@@ -103,8 +103,10 @@ final class Jpeg2000RasterFrames {
 
     static BufferedImage toImage(ImageDescriptor descriptor, Jpeg2000Raster raster,
             ImageReadParam param) throws IIOException {
+        boolean allocatedPrecision = descriptor.getBitsAllocated() > descriptor.getBitsStored()
+                && raster.precision() == descriptor.getBitsAllocated();
         if (raster.width() != descriptor.getColumns() || raster.height() != descriptor.getRows()
-                || raster.precision() != descriptor.getBitsStored()
+                || (raster.precision() != descriptor.getBitsStored() && !allocatedPrecision)
                 || (raster.signed() != descriptor.isSigned()
                         && !(descriptor.isSigned() && !raster.signed()))
                 || raster.componentCount() != descriptor.getSamples()) {
@@ -157,6 +159,26 @@ final class Jpeg2000RasterFrames {
         int[][] samples = new int[raster.componentCount()][];
         for (int c = 0; c < samples.length; c++) {
             samples[c] = raster.component(c);
+        }
+        if (allocatedPrecision) {
+            int storedBits = descriptor.getBitsStored();
+            int mask = (1 << storedBits) - 1;
+            int signBit = 1 << (storedBits - 1);
+            for (int[] component : samples) {
+                for (int i = 0; i < component.length; i++) {
+                    int value = component[i];
+                    if (!descriptor.isSigned()) {
+                        if (value < 0 || value > mask) {
+                            throw new IIOException("JPEG 2000 codestream sample exceeds DICOM BitsStored");
+                        }
+                    } else if (value < -signBit || value >= signBit) {
+                        if (value < 0 || value > mask) {
+                            throw new IIOException("JPEG 2000 codestream sample exceeds DICOM BitsStored");
+                        }
+                        component[i] = (value & signBit) == 0 ? value : value - (1 << storedBits);
+                    }
+                }
+            }
         }
         for (int y = 0; y < outHeight; y++) {
             int inputY = source.y + offsetY + y * stepY;

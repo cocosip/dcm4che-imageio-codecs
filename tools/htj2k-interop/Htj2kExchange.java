@@ -17,6 +17,7 @@ public final class Htj2kExchange {
         int bytesPerSample = precision <= 8 ? 1 : 2;
         int components = args.length > 8 ? Integer.parseInt(args[8])
                 : syntax.equals("201") ? 1 : 3;
+        boolean smooth = args.length > 9 && "smooth".equals(args[9]);
         String uid = "1.2.840.10008.1.2.4." + syntax;
         if (args[3].equals("encode")) {
             int[][] samples = new int[components][width * height];
@@ -24,7 +25,8 @@ public final class Htj2kExchange {
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
                     for (int c = 0; c < components; c++) {
-                        int value = (x * 17 + y * 31 + c * 79 + x * y * 3)
+                        int value = (smooth ? x * 2 + y * 3 + c * 19
+                                : x * 17 + y * 31 + c * 79 + x * y * 3)
                                 & ((1 << precision) - 1);
                         samples[c][y * width + x] = signed
                                 && (value & (1 << (precision - 1))) != 0

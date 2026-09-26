@@ -45,7 +45,7 @@ class Htj2kPacketCodecTest {
     }
 
     @Test
-    void rejectsTruncatedPacketAndUnsupportedPasses() throws Exception {
+    void rejectsTruncatedAndMalformedPacketHeaders() throws Exception {
         assertThrows(IIOException.class, () -> Htj2kPacketCodec.decode(hex("C0"),
                 Collections.singletonList(new int[] {1, 1})));
         assertThrows(IIOException.class, () -> Htj2kPacketCodec.decode(hex("F0"),

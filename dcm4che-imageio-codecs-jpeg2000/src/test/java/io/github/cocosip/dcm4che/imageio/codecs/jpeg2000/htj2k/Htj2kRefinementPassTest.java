@@ -2,6 +2,7 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.htj2k;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import javax.imageio.IIOException;
 
@@ -30,8 +31,9 @@ class Htj2kRefinementPassTest {
                 () -> Htj2kRefinementPass.decode(cleanup, 7, 3, new byte[] {0x01}));
         Htj2kCodeBlock manySignificant = new Htj2kCodeBlock(4, 4, 8,
                 new int[] {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1});
-        assertThrows(IIOException.class,
+        IIOException truncated = assertThrows(IIOException.class,
                 () -> Htj2kRefinementPass.decode(manySignificant, 5, 3,
                         new byte[] {0x01}));
+        assertTrue(truncated.getMessage().contains("reverse bit position 8"));
     }
 }

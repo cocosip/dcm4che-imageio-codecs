@@ -111,6 +111,10 @@ final class Htj2kReverseBitStream {
         int bitPosition() {
             return bitPosition;
         }
+
+        void initializeRefinement() {
+            rightByteGreaterThan8f = true;
+        }
     }
 
     static final class Writer {

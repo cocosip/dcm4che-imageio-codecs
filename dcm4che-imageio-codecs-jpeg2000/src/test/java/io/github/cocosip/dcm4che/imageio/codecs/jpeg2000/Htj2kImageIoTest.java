@@ -13,6 +13,7 @@ import java.util.Arrays;
 
 import javax.imageio.IIOImage;
 import javax.imageio.IIOException;
+import javax.imageio.ImageIO;
 import javax.imageio.ImageReadParam;
 import javax.imageio.stream.MemoryCacheImageInputStream;
 import javax.imageio.stream.MemoryCacheImageOutputStream;
@@ -113,6 +114,17 @@ class Htj2kImageIoTest {
         reader.setInput(new DescriptorInputStream(Arrays.copyOf(encoded, encoded.length + 2),
                 descriptor, false));
         assertThrows(IIOException.class, () -> reader.read(0));
+    }
+
+    @Test
+    void registersEachTransferSyntaxWithItsOwnSpi() {
+        ImageIO.scanForPlugins();
+        assertTrue(ImageIO.getImageReadersByFormatName("htj2k-lossless").hasNext());
+        assertTrue(ImageIO.getImageReadersByFormatName("htj2k-lossless-rpcl").hasNext());
+        assertTrue(ImageIO.getImageReadersByFormatName("htj2k-lossy").hasNext());
+        assertTrue(ImageIO.getImageWritersByFormatName("htj2k-lossless").hasNext());
+        assertTrue(ImageIO.getImageWritersByFormatName("htj2k-lossless-rpcl").hasNext());
+        assertTrue(ImageIO.getImageWritersByFormatName("htj2k-lossy").hasNext());
     }
 
     private static BufferedImage image(ImageDescriptor descriptor) {

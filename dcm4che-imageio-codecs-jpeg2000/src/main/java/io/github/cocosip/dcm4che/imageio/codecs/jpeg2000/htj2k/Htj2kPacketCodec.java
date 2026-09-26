@@ -8,7 +8,7 @@ import java.util.List;
 
 import javax.imageio.IIOException;
 
-/** One-layer inline HT packet with a single cleanup pass per included block. */
+/** One-layer inline HT packet with cleanup and optional refinement segments. */
 final class Htj2kPacketCodec {
     private Htj2kPacketCodec() {
     }
@@ -55,14 +55,27 @@ final class Htj2kPacketCodec {
                     continue;
                 }
                 missing.encode(header, x, y, block.missingMsbs + 1);
-                header.bit(0);
-                int lengthBits = 32 - Integer.numberOfLeadingZeros(block.data.length);
+                if (block.passes == 1) {
+                    header.bit(0);
+                } else if (block.passes == 2) {
+                    header.bit(1);
+                    header.bit(0);
+                } else {
+                    header.bits(0xC, 4);
+                }
+                int lengthBits = Math.max(32 - Integer.numberOfLeadingZeros(block.cleanupLength),
+                        32 - Integer.numberOfLeadingZeros(block.data.length - block.cleanupLength)
+                                - (block.passes == 3 ? 1 : 0));
                 int extra = Math.max(0, lengthBits - 3);
                 for (int j = 0; j < extra; j++) {
                     header.bit(1);
                 }
                 header.bit(0);
-                header.bits(block.data.length, 3 + extra);
+                header.bits(block.cleanupLength, 3 + extra);
+                if (block.passes > 1) {
+                    header.bits(block.data.length - block.cleanupLength,
+                            3 + extra + (block.passes == 3 ? 1 : 0));
+                }
                 body.write(block.data, 0, block.data.length);
             }
         }
@@ -119,8 +132,12 @@ final class Htj2kPacketCodec {
                     continue;
                 }
                 int missingMsbs = missing.decodeValue(header, x, y);
-                if (header.bit() != 0) {
-                    throw new IIOException("HT packet refinement passes are unsupported");
+                int passes = readPasses(header);
+                int placeholders = (passes - 1) / 3;
+                missingMsbs += placeholders;
+                passes -= placeholders * 3;
+                if (missingMsbs > 29) {
+                    throw new IIOException("HT packet missing bitplanes exceed supported precision");
                 }
                 int extra = 0;
                 while (header.bit() != 0) {
@@ -128,13 +145,19 @@ final class Htj2kPacketCodec {
                         throw new IIOException("HT packet Lblock exceeds cleanup limit");
                     }
                 }
-                int length = header.bits(3 + extra);
-                if (length < 2 || length > 32768 || total > end - offset - length) {
+                int cleanupLength = header.bits(3 + extra
+                        + 31 - Integer.numberOfLeadingZeros(placeholders * 3 + 1));
+                int refinementLength = passes == 1 ? 0
+                        : header.bits(3 + extra + (passes == 3 ? 1 : 0));
+                int length = cleanupLength + refinementLength;
+                if (cleanupLength < 2 || cleanupLength > 32768
+                        || refinementLength >= 2047 || (passes > 1 && refinementLength == 0)
+                        || total > end - offset - length) {
                     throw new IIOException("Invalid HT packet cleanup length");
                 }
                 total += length;
                 bandLengths[i] = length;
-                blocks.add(new Contribution(missingMsbs, new byte[0]));
+                blocks.add(new Contribution(missingMsbs, new byte[0], cleanupLength, passes));
             }
             lengths.add(bandLengths);
             result.add(new Band(size[0], size[1], blocks));
@@ -150,8 +173,10 @@ final class Htj2kPacketCodec {
             List<Contribution> blocks = new ArrayList<Contribution>();
             for (int i = 0; i < band.blocks.size(); i++) {
                 int length = lengths.get(bandIndex)[i];
-                blocks.add(new Contribution(band.blocks.get(i).missingMsbs,
-                        Arrays.copyOfRange(packet, position, position + length)));
+                Contribution block = band.blocks.get(i);
+                blocks.add(new Contribution(block.missingMsbs,
+                        Arrays.copyOfRange(packet, position, position + length),
+                        block.cleanupLength, block.passes));
                 position += length;
             }
             decoded.add(new Band(band.width, band.height, blocks));
@@ -178,15 +203,41 @@ final class Htj2kPacketCodec {
     static final class Contribution {
         final int missingMsbs;
         final byte[] data;
+        final int cleanupLength;
+        final int passes;
 
         Contribution(int missingMsbs, byte[] data) {
+            this(missingMsbs, data, data == null ? 0 : data.length, 1);
+        }
+
+        Contribution(int missingMsbs, byte[] data, int cleanupLength, int passes) {
             if (missingMsbs < 0 || missingMsbs > 30 || data == null
-                    || (data.length != 0 && (data.length < 2 || data.length > 32768))) {
+                    || passes < 1 || passes > 3 || cleanupLength < 0 || cleanupLength > 32768
+                    || (data.length != 0 && (cleanupLength < 2 || cleanupLength > data.length
+                    || data.length - cleanupLength >= 2047
+                    || (passes == 1 && cleanupLength != data.length)))) {
                 throw new IllegalArgumentException("Invalid HT packet contribution");
             }
             this.missingMsbs = missingMsbs;
             this.data = data.clone();
+            this.cleanupLength = cleanupLength;
+            this.passes = passes;
         }
+    }
+
+    private static int readPasses(Htj2kPacketBits.Reader header) throws IIOException {
+        if (header.bit() == 0) {
+            return 1;
+        }
+        if (header.bit() == 0) {
+            return 2;
+        }
+        int value = header.bits(2);
+        if (value < 3) {
+            return 3 + value;
+        }
+        value = header.bits(5);
+        return value < 31 ? 6 + value : 37 + header.bits(7);
     }
 
     static final class Decoded {

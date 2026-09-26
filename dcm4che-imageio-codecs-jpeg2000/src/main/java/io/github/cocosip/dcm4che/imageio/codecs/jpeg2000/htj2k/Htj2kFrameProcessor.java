@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import javax.imageio.IIOException;
@@ -268,13 +269,14 @@ final class Htj2kFrameProcessor {
                     if (contribution.data.length == 0) {
                         continue;
                     }
-                    if (contribution.missingMsbs != kmax - 1) {
-                        throw new IIOException("Unsupported HTJ2K cleanup bitplane count");
-                    }
                     Jpeg2000Geometry.CodeBlock block = band.codeBlocks().get(blockIndex);
                     Htj2kCodeBlock decoded = Htj2kCleanupPassDecoder.decode(
-                            contribution.data, (int) block.bounds().width(),
+                            Arrays.copyOf(contribution.data, contribution.cleanupLength),
+                            (int) block.bounds().width(),
                             (int) block.bounds().height(), kmax);
+                    decoded = Htj2kRefinementPass.decode(decoded, contribution.missingMsbs,
+                            contribution.passes, Arrays.copyOfRange(contribution.data,
+                                    contribution.cleanupLength, contribution.data.length));
                     writeBlock(coefficients[coordinate.component()], width, block, decoded);
                 }
             }

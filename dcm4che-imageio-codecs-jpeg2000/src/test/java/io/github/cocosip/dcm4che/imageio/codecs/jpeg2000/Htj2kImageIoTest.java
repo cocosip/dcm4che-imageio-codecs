@@ -34,6 +34,52 @@ import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.htj2k.Htj2kFrameCodec;
 
 class Htj2kImageIoTest {
     @Test
+    void roundTripsLosslessSampleAndLayoutMatrix() throws Exception {
+        for (String uid : new String[] {
+                Htj2kFrameCodec.LOSSLESS_UID, Htj2kFrameCodec.LOSSLESS_RPCL_UID}) {
+            for (int bits : new int[] {8, 12, 16}) {
+                for (boolean signed : new boolean[] {false, true}) {
+                    for (String photometric : new String[] {"MONOCHROME2", "PALETTE COLOR"}) {
+                        ImageDescriptor descriptor = descriptor(17, 19, bits,
+                                signed, photometric, 1, false);
+                        BufferedImage source = image(descriptor);
+                        assertPixels(source, decode(uid,
+                                encode(uid, descriptor, source, null), descriptor,
+                                null, false), 0);
+                    }
+                    for (boolean planar : new boolean[] {false, true}) {
+                        ImageDescriptor descriptor = descriptor(17, 19, bits,
+                                signed, "RGB", 3, planar);
+                        BufferedImage source = image(descriptor);
+                        assertPixels(source, decode(uid,
+                                encode(uid, descriptor, source, null), descriptor,
+                                null, false), 0);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void readerSpisDistinguishHtAndClassicCodestreams() throws Exception {
+        ImageDescriptor descriptor = descriptor(2, 2, 8, false, "MONOCHROME2", 1, false);
+        byte[] ht = {(byte) 0xff, 0x4f, (byte) 0xff, 0x51, 0, 41, 0x40, 0};
+        byte[] classic = {(byte) 0xff, 0x4f, (byte) 0xff, 0x51, 0, 41, 0, 0};
+        DescriptorInputStream htInput = new DescriptorInputStream(ht, descriptor, false);
+        DescriptorInputStream classicInput = new DescriptorInputStream(classic, descriptor, false);
+        assertTrue(new Htj2kLosslessImageReaderSpi().canDecodeInput(htInput));
+        assertTrue(new Htj2kLosslessRpclImageReaderSpi().canDecodeInput(htInput));
+        assertTrue(new Htj2kLossyImageReaderSpi().canDecodeInput(htInput));
+        assertEquals(0, htInput.getStreamPosition());
+        assertTrue(new Jpeg2000LosslessImageReaderSpi().canDecodeInput(classicInput));
+        assertTrue(new Jpeg2000LossyImageReaderSpi().canDecodeInput(classicInput));
+        assertEquals(0, classicInput.getStreamPosition());
+        assertTrue(!new Jpeg2000LosslessImageReaderSpi().canDecodeInput(htInput));
+        assertTrue(!new Jpeg2000LossyImageReaderSpi().canDecodeInput(htInput));
+        assertTrue(!new Htj2kLosslessImageReaderSpi().canDecodeInput(classicInput));
+    }
+
+    @Test
     void roundTripsLosslessGrayscaleAndPaletteFrames() throws Exception {
         for (String photometric : new String[] {"MONOCHROME2", "PALETTE COLOR"}) {
             ImageDescriptor descriptor = descriptor(35, 37, 12, true, photometric, 1, false);
@@ -73,6 +119,32 @@ class Htj2kImageIoTest {
                     assertEquals(source.getRaster().getSample(3 + 2 * x, 2 + 3 * y, c),
                             region.getRaster().getSample(x, y, c));
                 }
+            }
+        }
+    }
+
+    @Test
+    void readsSelectedBandsIntoDestinationWithOffset() throws Exception {
+        ImageDescriptor descriptor = descriptor(13, 15, 8, false, "RGB", 3, false);
+        BufferedImage source = image(descriptor);
+        byte[] encoded = encode(Htj2kFrameCodec.LOSSLESS_RPCL_UID,
+                descriptor, source, null);
+        BufferedImage destination = image(descriptor);
+        Htj2kImageReader reader = reader(Htj2kFrameCodec.LOSSLESS_RPCL_UID);
+        reader.setInput(new DescriptorInputStream(encoded, descriptor, false));
+        ImageReadParam param = reader.getDefaultReadParam();
+        param.setSourceRegion(new Rectangle(2, 3, 7, 5));
+        param.setSourceBands(new int[] {2, 0});
+        param.setDestinationBands(new int[] {0, 2});
+        param.setDestination(destination);
+        param.setDestinationOffset(new java.awt.Point(4, 6));
+        reader.read(0, param);
+        for (int y = 0; y < 5; y++) {
+            for (int x = 0; x < 7; x++) {
+                assertEquals(source.getRaster().getSample(x + 2, y + 3, 2),
+                        destination.getRaster().getSample(x + 4, y + 6, 0));
+                assertEquals(source.getRaster().getSample(x + 2, y + 3, 0),
+                        destination.getRaster().getSample(x + 4, y + 6, 2));
             }
         }
     }
@@ -236,7 +308,9 @@ class Htj2kImageIoTest {
         for (int y = 0; y < source.getHeight(); y++) {
             for (int x = 0; x < source.getWidth(); x++) {
                 for (int c = 0; c < descriptor.getSamples(); c++) {
-                    int value = (x * 17 + y * 11 + c * 59) & mask;
+                    int value = (x * 17 + y * 11 + c * 59
+                            + (descriptor.isSigned() && ((x + y) & 1) != 0
+                                    ? 1 << (descriptor.getBitsStored() - 1) : 0)) & mask;
                     if (descriptor.isSigned() && (value & (1 << (descriptor.getBitsStored() - 1))) != 0) {
                         value -= 1 << descriptor.getBitsStored();
                     }

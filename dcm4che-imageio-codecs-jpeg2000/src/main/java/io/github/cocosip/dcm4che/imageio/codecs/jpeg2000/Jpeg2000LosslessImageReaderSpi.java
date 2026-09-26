@@ -22,9 +22,31 @@ public final class Jpeg2000LosslessImageReaderSpi extends AbstractDicomImageRead
     }
 
     static boolean hasCodestreamSignature(ImageInputStream input) throws IOException {
+        return hasCodestreamSignature(input, false);
+    }
+
+    static boolean hasHtCodestreamSignature(ImageInputStream input) throws IOException {
+        return hasCodestreamSignature(input, true);
+    }
+
+    private static boolean hasCodestreamSignature(ImageInputStream input, boolean ht)
+            throws IOException {
         long position = input.getStreamPosition();
         try {
-            return input.read() == 0xff && input.read() == 0x4f;
+            if (input.read() != 0xff || input.read() != 0x4f
+                    || input.read() != 0xff || input.read() != 0x51) {
+                return false;
+            }
+            int lengthHigh = input.read();
+            int lengthLow = input.read();
+            int rsizHigh = input.read();
+            int rsizLow = input.read();
+            if (rsizLow < 0) {
+                return false;
+            }
+            int length = (lengthHigh << 8) | lengthLow;
+            int rsiz = (rsizHigh << 8) | rsizLow;
+            return length >= 38 && (rsiz == 0x4000) == ht;
         } finally {
             input.seek(position);
         }

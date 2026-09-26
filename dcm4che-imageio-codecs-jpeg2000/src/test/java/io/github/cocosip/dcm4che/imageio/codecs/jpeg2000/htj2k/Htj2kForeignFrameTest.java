@@ -114,4 +114,49 @@ class Htj2kForeignFrameTest {
             assertArrayEquals(csharpPixels, decoded.toFrame(false), variant);
         }
     }
+
+    @Test
+    void cSharpDecodesJavaEncodedColorFixtures() throws Exception {
+        assertJavaEncodedFixture("htj2k_java_rgb8_201",
+                Htj2kFrameCodec.LOSSLESS_UID, 64, 64, 8, 0);
+        assertJavaEncodedFixture("htj2k_java_rgb12_202",
+                Htj2kFrameCodec.LOSSLESS_RPCL_UID, 129, 131, 12, 0);
+        assertJavaEncodedFixture("htj2k_java_rgb12_203",
+                Htj2kFrameCodec.LOSSY_UID, 129, 131, 12, 1);
+    }
+
+    private static void assertJavaEncodedFixture(String name, String uid,
+            int width, int height, int precision, int tolerance) throws Exception {
+        byte[] codestream = Files.readAllBytes(Paths.get(Htj2kForeignFrameTest.class
+                .getResource("/jpeg2000/" + name + ".j2c").toURI()));
+        byte[] cSharpPixels = Files.readAllBytes(Paths.get(Htj2kForeignFrameTest.class
+                .getResource("/jpeg2000/" + name + ".raw").toURI()));
+        Jpeg2000Raster decoded = Htj2kFrameCodec.forTransferSyntax(uid)
+                .decode(codestream);
+        assertEquals(width, decoded.width());
+        assertEquals(height, decoded.height());
+        assertEquals(width * height * 3 * (precision <= 8 ? 1 : 2), cSharpPixels.length);
+        int[][] javaSamples = {
+                decoded.component(0), decoded.component(1), decoded.component(2)
+        };
+        int sampleBytes = precision <= 8 ? 1 : 2;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int pixel = y * width + x;
+                for (int component = 0; component < 3; component++) {
+                    int offset = (pixel * 3 + component) * sampleBytes;
+                    int foreign = cSharpPixels[offset] & 0xff;
+                    if (sampleBytes == 2) {
+                        foreign |= (cSharpPixels[offset + 1] & 0xff) << 8;
+                    }
+                    int expected = (x * 2 + y * 3 + component * 19)
+                            & ((1 << precision) - 1);
+                    assertTrue(Math.abs(expected - foreign) <= tolerance,
+                            name + " C# sample " + pixel + "," + component);
+                    assertTrue(Math.abs(javaSamples[component][pixel] - foreign) <= tolerance,
+                            name + " Java/C# sample " + pixel + "," + component);
+                }
+            }
+        }
+    }
 }

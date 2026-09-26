@@ -149,12 +149,14 @@ class Jpeg2000LosslessImageIoTest {
     }
 
     @Test
-    void readerSpisCheckSocWithoutConsumingInput() throws Exception {
+    void readerSpisCheckClassicSizWithoutConsumingInput() throws Exception {
         ImageDescriptor descriptor = descriptor(2, 2, 8, false, "MONOCHROME2", false);
         DescriptorInputStream valid = new DescriptorInputStream(
-                new byte[] {(byte) 0xff, 0x4f, 0}, descriptor);
+                new byte[] {(byte) 0xff, 0x4f, (byte) 0xff, 0x51, 0, 41, 0, 0}, descriptor);
         DescriptorInputStream invalid = new DescriptorInputStream(
                 new byte[] {(byte) 0xff, (byte) 0xd8, 0}, descriptor);
+        DescriptorInputStream truncated = new DescriptorInputStream(
+                new byte[] {(byte) 0xff, 0x4f, (byte) 0xff, 0x51, 0}, descriptor);
         Jpeg2000LosslessImageReaderSpi lossless = new Jpeg2000LosslessImageReaderSpi();
         Jpeg2000LossyImageReaderSpi lossy = new Jpeg2000LossyImageReaderSpi();
 
@@ -163,7 +165,10 @@ class Jpeg2000LosslessImageIoTest {
         assertEquals(0, valid.getStreamPosition());
         assertFalse(lossless.canDecodeInput(invalid));
         assertFalse(lossy.canDecodeInput(invalid));
+        assertFalse(lossless.canDecodeInput(truncated));
+        assertFalse(lossy.canDecodeInput(truncated));
         assertEquals(0, invalid.getStreamPosition());
+        assertEquals(0, truncated.getStreamPosition());
     }
 
     @Test

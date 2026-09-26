@@ -17,8 +17,6 @@ Target suffixes: `rle`, `jpeg_baseline`, `jpeg_process2_4`,
 `jpegls_near_lossless`, `j2k_lossless`, `j2k_lossy`, `htj2k_lossless`,
 `htj2k_lossless_rpcl`, `htj2k_lossy`.
 
-HTJ2K targets are listed for the final codec release. Their ImageIO providers
-are currently unregistered while the HTJ2K release matrix remains open, so
-these targets report an unavailable encoder until that gate passes. Other
-unsupported input/target combinations fail individually without interrupting
-the remaining formats. C# is not used by this tool or its Java tests.
+HTJ2K targets use the Java `.201/.202/.203` ImageIO providers. Unsupported
+input/target combinations fail individually without interrupting the remaining
+formats. C# is not used by this tool.

@@ -17,6 +17,7 @@ import org.dcm4che3.io.DicomOutputStream;
 
 import io.github.cocosip.dcm4che.imageio.codecs.core.registry.CodecRegistrations;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg.JpegImageWriter;
+import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.Htj2kCodec;
 import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.Jpeg2000Codec;
 import io.github.cocosip.dcm4che.imageio.codecs.jpegls.JpegLsCodec;
 import io.github.cocosip.dcm4che.imageio.codecs.rle.RleCodec;
@@ -91,6 +92,7 @@ public final class DicomCompress {
                 "readers.properties", "writers.properties");
         JpegLsCodec.register();
         Jpeg2000Codec.register();
+        Htj2kCodec.register();
     }
 
     private static void compress(Path input, Path output, Target target) throws IOException {

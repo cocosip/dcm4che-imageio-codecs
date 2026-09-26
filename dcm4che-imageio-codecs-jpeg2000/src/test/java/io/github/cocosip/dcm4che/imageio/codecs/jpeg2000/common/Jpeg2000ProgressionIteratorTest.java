@@ -77,6 +77,30 @@ class Jpeg2000ProgressionIteratorTest {
         assertEquals("0:1:0:2", packets.get(4).toString());
     }
 
+    @Test
+    void visitsEveryPacketOnceAtClippedTileEdges() throws Exception {
+        Jpeg2000Geometry.Image image = Jpeg2000Geometry.create(
+                0, 0, 130, 133, 0, 0, 64, 64,
+                3, 5, 64, 64, Jpeg2000Limits.defaults());
+        assertEquals(9, image.tiles().size());
+        for (Jpeg2000Geometry.Tile tile : image.tiles()) {
+            int expected = 0;
+            for (Jpeg2000Geometry.Component component : tile.components()) {
+                for (Jpeg2000Geometry.Resolution resolution : component.resolutions()) {
+                    expected += resolution.precincts().size();
+                }
+            }
+            for (Jpeg2000ProgressionOrder order : Jpeg2000ProgressionOrder.values()) {
+                List<Jpeg2000ProgressionIterator.PacketCoordinate> packets =
+                        Jpeg2000ProgressionIterator.enumerate(
+                                order, 1, tile, Jpeg2000Limits.defaults());
+                assertEquals(expected, packets.size());
+                assertEquals(expected,
+                        new HashSet<Jpeg2000ProgressionIterator.PacketCoordinate>(packets).size());
+            }
+        }
+    }
+
     private static List<Jpeg2000ProgressionIterator.PacketCoordinate> allCoordinates(
             int layers, int[][] precinctCounts) {
         List<Jpeg2000ProgressionIterator.PacketCoordinate> result =

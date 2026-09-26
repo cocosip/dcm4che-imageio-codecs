@@ -36,6 +36,12 @@ class Htj2kFoDicomFixtureTest {
     }
 
     @Test
+    void decodesFoDicomRgbWithLosslessSyntax() throws Exception {
+        assertFixture("htj2k_fodicom_rgb8_202", Htj2kFrameCodec.LOSSLESS_UID,
+                64, 64, 8, 8, 3, false, 0);
+    }
+
+    @Test
     void decodesFoDicomLossyRgbWithinTolerance() throws Exception {
         assertFixture("htj2k_fodicom_rgb8_203", Htj2kFrameCodec.LOSSY_UID,
                 64, 64, 8, 8, 3, false, 4);

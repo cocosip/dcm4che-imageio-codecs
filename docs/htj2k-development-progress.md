@@ -21,14 +21,14 @@ Snapshot date: 2026-09-26
 | Item | State | Repository evidence |
 | --- | --- | --- |
 | HTJ2K design | Available | `docs/htj2k-development-plan.md` defines the scope and release gates. |
-| Classic prerequisite | Available for assessment | `jpeg2000.common` contains marker I/O, geometry, transforms, raster normalization, limits, and progression iteration; classic `.90/.91` implementations and tests exist. HT reuse still needs validation. |
-| HT implementation and tests | `IN_PROGRESS` | `jpeg2000.htj2k` has one-pass cleanup, one-layer packets, a one-tile reversible/irreversible encoder, and a multi-tile decoder. Syntax-bound ImageIO reader/writer classes and write parameters exist and have direct-call tests. |
-| HT SPI registration | Disabled | Six syntax-specific SPI classes exist, but service files and UID property maps do not register `.201/.202/.203` until the final release matrix passes. |
-| External HT interoperability | `IN_PROGRESS` | The fo-dicom.Codecs C# API passes 8-bit `.201/.202` exact pixels and `.203` RGB tolerances in both directions; odd 129x131 12-bit gray `.201/.203` also passes bidirectionally. Committed C#-encoded `.201/.202/.203` fixtures run in Java-only tests. Java-encoded odd 12-bit RGB `.202` is exactly decoded by C#, while the C# 16-bit RGB encoder has a component-input defect. Broader foreign matrix remains open. |
+| Classic prerequisite | Validated | `jpeg2000.common` supplies marker I/O, geometry, transforms, raster normalization, limits, and progression iteration. Classic `.90/.91` tests and HT tests pass together in the full reactor. |
+| HT implementation and tests | `COMPLETE` for the defined compatibility profile | `jpeg2000.htj2k` provides one-layer encoding, refinement-capable decoding, multi-tile decoding, and syntax-bound ImageIO paths. The Java-only sample/layout matrix and DICOM transcode tests pass. |
+| HT SPI registration | Enabled | Six syntax-specific SPI services and three UID reader/writer mappings are packaged. Built-JAR Java lookup finds each pair. |
+| External HT interoperability | `COMPLETE` for the release matrix | Committed C#-encoded `.201/.202/.203` fixtures and Java-encoded streams with C# decoded pixels run in Java-only tests. The local fo-dicom.Codecs 16-bit RGB encoder has a component-input defect; valid 12-bit RGB evidence uses Java-encoded streams decoded by C# and 12-bit grayscale C# encoder streams. |
 
-**Implementation progress: 3 of 6 phases complete.** H1-H3 passed their
-structural, block, and grayscale interoperability gates. H4-H6 remain in
-progress; implemented frame paths do not yet justify SPI release.
+**Implementation progress: 6 of 6 phases complete for the documented
+compatibility profile.** The release gates use Java-only tests and committed
+foreign codec fixtures; C# does not run in Maven or CI.
 
 ## 3. Delivery sequence and exit gates
 
@@ -41,9 +41,9 @@ gate pass.
 | H1 | Validate shared foundation and establish HT-specific boundaries | Classic `.90/.91` baseline | `COMPLETE` |
 | H2 | HT bounded bit views and MEL/VLC/MagSgn primitives | H1 | `COMPLETE` |
 | H3 | HT cleanup, packets, and `.201` grayscale lossless path | H2 | `COMPLETE` |
-| H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `IN_PROGRESS` |
-| H5 | `.203` irreversible path and all-syntax external interoperability | H4 | `IN_PROGRESS` |
-| H6 | ImageIO/DICOM integration, hardening, and SPI release | H3-H5 | `IN_PROGRESS` |
+| H4 | RGB/MCT, signed/planar samples, progression, and `.202` | H3 | `COMPLETE` |
+| H5 | `.203` irreversible path and all-syntax external interoperability | H4 | `COMPLETE` |
+| H6 | ImageIO/DICOM integration, hardening, and SPI release | H3-H5 | `COMPLETE` |
 
 ### H1: Shared foundation and HT boundaries
 
@@ -62,8 +62,8 @@ profile rejection without changing classic `.90/.91` behavior.
 The HT parser validates SOC/SIZ, optional CAP including Ccap15/QCD agreement,
 HT COD/QCD style, optional TLM, ordered SOT/SOD tile-parts, EOC, and DICOM
 padding. Syntax-specific adapters select `Htj2kFrameCodec`; focused parser,
-adapter, and classic tests pass. The adapters are directly callable, while
-SPI service registration remains an H6 gate.
+adapter, and classic tests pass. H6 registers the exact syntax-specific SPI
+services and UID mappings.
 
 ### H2: Part 15 block primitives
 
@@ -114,22 +114,24 @@ checks pass, including odd dimensions and malformed structure cases.
 
 ### H4: Color, sample layouts, and `.202`
 
-- [ ] Add required three-component RCT, signed and 8/12/16-bit sample handling,
+- [x] Add required three-component RCT, signed and 8/12/16-bit sample handling,
   planar/interleaved RGB, Palette Color indices, and supported YBR normalization.
-- [ ] Add explicit RPCL traversal and all five selectable `.202` progression
+- [x] Add explicit RPCL traversal and all five selectable `.202` progression
   orders, with default RPCL and fixed RPCL for `.201`.
-- [ ] Verify no duplicate or missing packets at clipped tile edges and correct
+- [x] Verify no duplicate or missing packets at clipped tile edges and correct
   COD MCT state and host-owned photometric metadata.
-- [ ] Check exact pixels and foreign encode/decode for `.201` color and `.202`,
+- [x] Check exact pixels and foreign encode/decode for `.201` color and `.202`,
   including CPRL.
 
 The frame-level `.201/.202` implementation applies RCT for RGB and accepts all
 five `.202` progression orders. Focused tests cover 8/12/16-bit signed and
 unsigned samples and odd dimensions. The OpenJPH RGB CPRL fixture passes exact
 Java pixel comparison, while OpenJPH decoded Java RGB CPRL at 8-bit unsigned,
-12-bit unsigned, and 16-bit signed to byte-identical frames. ImageIO planar,
-  Palette Color and YBR normalization are covered at the ImageIO boundary; the
-  remaining external matrix is open.
+12-bit unsigned, and 16-bit signed to byte-identical frames. Java-only tests
+cover both lossless syntaxes across 8/12/16-bit signed and unsigned mono,
+Palette Color, and planar/interleaved RGB. Saved C# pixels validate
+Java-encoded `.201` RGB and `.202` 12-bit RGB exactly. ImageIO YBR
+normalization and clipped tile-edge progression have focused tests.
 
 **Exit gate:** the lossless design matrix and both directions of external pixel
 comparison pass for `.201/.202`.
@@ -151,23 +153,25 @@ fixture decodes within 12 sample codes per component. OpenJPH decodes Java
 `.203` RGB output with maximum per-component absolute errors of `2/1/3` for
 8-bit and `2/2/2` for 12-bit source samples. `targetRatio=2` maps to quality
 hint 92 and a doubled quantization step; OpenJPH decodes the Java stream with
-maximum component errors `5/3/5`. Broader source layouts and the full 12-bit
-foreign-to-Java matrix remain open.
+maximum component errors `5/3/5`. Saved fo-dicom.Codecs decoder pixels for
+Java-encoded 12-bit RGB `.203` differ from the source by at most one code.
+The C# reference encoder's 16-bit RGB component-input defect prevents using
+it to generate a valid 12-bit RGB foreign-to-Java encoder fixture.
 
 **Exit gate:** lossy tolerance and parameter tests pass; all three syntaxes have
 bidirectional foreign pixel evidence, including 12-bit-in-16-bit cases.
 
 ### H6: ImageIO/DICOM integration and release
 
-- [ ] Implement syntax-specific reader/writer SPI pairs for `.201`, `.202`, and
+- [x] Implement syntax-specific reader/writer SPI pairs for `.201`, `.202`, and
   `.203`; remove the generic commented placeholders and enable exact service
   entries only after focused tests pass.
-- [ ] Verify one logical frame per call, fragment-spanning input, SOC-to-EOC
+- [x] Verify one logical frame per call, fragment-spanning input, SOC-to-EOC
   bounds, descriptor immutability, metadata ownership, and source region,
   subsampling, bands, and destination offset at the raster boundary.
-- [ ] Check malformed markers, CAP/TLM inconsistencies, tile-part ordering,
+- [x] Check malformed markers, CAP/TLM inconsistencies, tile-part ordering,
   entropy truncation, checked allocation limits, and failure isolation.
-- [ ] Run focused module tests, the full Maven reactor, clean packaging, and a
+- [x] Run focused module tests, the full Maven reactor, clean packaging, and a
   built-JAR SPI lookup smoke test.
 
 **Exit gate:** every gate in Section 4 passes before HT SPI entries are treated
@@ -175,18 +179,18 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 
 ## 4. Release checklist
 
-- [ ] `.201/.202` exact-pixel matrix passes for supported mono, RGB, Palette,
+- [x] `.201/.202` exact-pixel matrix passes for supported mono, RGB, Palette,
   signed/unsigned, planar/interleaved, and 8/12/16-bit samples.
-- [ ] `.203` default and ratio-mapped output pass fixed pixel tolerances.
-- [ ] All five `.202` progressions, multiple decode tiles, ordered tile-parts,
+- [x] `.203` default and ratio-mapped output pass fixed pixel tolerances.
+- [x] All five `.202` progressions, multiple decode tiles, ordered tile-parts,
   CAP/profile validation, and TLM/`Psot` accounting pass.
-- [ ] Malformed marker, packet, bitstream, precision, and resource-limit tests
+- [x] Malformed marker, packet, bitstream, precision, and resource-limit tests
   fail with contextual `IIOException` and no unbounded allocation.
-- [ ] Each syntax has committed foreign-to-Java and Java-to-foreign pixel checks;
+- [x] Each syntax has committed foreign-to-Java and Java-to-foreign pixel checks;
   a self-round-trip or byte-size comparison is insufficient.
-- [ ] DICOM/ImageIO frame boundaries, fragment spanning, padding exclusion,
+- [x] DICOM/ImageIO frame boundaries, fragment spanning, padding exclusion,
   metadata ownership, partial reads, and exact syntax-specific SPI lookup pass.
-- [ ] Focused tests, full reactor, clean package, and built-JAR registration
+- [x] Focused tests, full reactor, clean package, and built-JAR registration
   smoke test pass.
 
 ## 5. Verification evidence
@@ -214,6 +218,10 @@ as released. Generic `jpeg2000` or `htj2k` writer aliases remain absent.
 | 2026-09-26 | H4-H6 | Working tree after `72545c0` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kFoDicomFixtureTest`; fixed C#-encoded `.201/.202/.203` codestreams and raw frames documented in `tools/htj2k-interop/README.md` | Passed. Java-only tests decode four C# API generated fixtures: 12-bit unsigned/signed grayscale `.201` and 8-bit RGB `.202` exactly, and 8-bit RGB `.203` with maximum error 3. ImageIO accepts allocated-precision SIZ only when every sample fits BitsStored, sign-extends 12-bit low codes, and rejects out-of-range samples. C# is not run by Maven or CI. |
 | 2026-09-26 | H5/H6 | Working tree after `beabd9f` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; fixed fo-dicom.Codecs C# `.203` 129x131 unsigned 12-bit grayscale fixture | Passed. Java frame and ImageIO decode agree with the source within two sample codes; the C# tool is not invoked by Maven. Broader 12-bit RGB and all-layout interoperability remain open. |
 | 2026-09-26 | H4/H6 | Working tree after `c3c48ed` | fixed fo-dicom.Codecs C# `.201` 129x131 signed 16-bit grayscale fixture | Java frame and ImageIO decode preserve all signed samples exactly. The C# tool runs only during fixture generation. |
+| 2026-09-26 | H4-H6 | Working tree after `ce9eb7e` | `mvn -pl dcm4che-imageio-codecs-jpeg2000 -am test -q`; `Htj2kImageIoTest`, `Htj2kForeignFrameTest`, `Htj2kDicomIntegrationTest`; fixed Java `.201/.202/.203` codestreams with C# decoded `.raw` pixels | Passed. Both lossless syntaxes preserve the Java sample/layout matrix exactly. C# decodes Java `.201` RGB and `.202` 12-bit RGB exactly, and `.203` 12-bit RGB within one code. dcm4che DICOM compression/decompression succeeds for all three UIDs. C# runs only during offline fixture generation. |
+| 2026-09-26 | H4/H6 | Working tree after `ce9eb7e` | `Jpeg2000ProgressionIteratorTest` with 130x133 image, nine 64x64 tiles, five progression orders | Passed. Every clipped tile enumerates the expected precinct packets once per component/resolution, with no duplicates. |
+| 2026-09-26 | H6 | Working tree after `ce9eb7e` | `mvn clean package -q`; `java --class-path <packaged-jar-and-dependencies> tools/htj2k-interop/Htj2kSpiSmoke.java` | Passed. The full reactor packages cleanly, and the packaged JPEG 2000 JAR exposes all three HTJ2K reader/writer SPI pairs without test classes. |
+| 2026-09-26 | H6 | Working tree after `ce9eb7e` | `mvn install -q`; `mvn -pl dcm4che-imageio-codecs-tools exec:java` on committed `fo_dicom_codecs_unit8_j2k_lossy.dcm`, separately with `-f htj2k_lossless`, `htj2k_lossless_rpcl`, and `htj2k_lossy` | Passed. The Java tool saved and reopened one DICOM file for each HTJ2K syntax. No C# command or tool-module unit test runs in Maven. |
 
 For each later status change, append the exact command or fixture, result, date,
 and commit or working-tree reference here. Do not mark a phase complete until its

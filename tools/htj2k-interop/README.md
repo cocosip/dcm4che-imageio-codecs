@@ -72,3 +72,22 @@ ImageIO boundary validates the low codes and sign-extends them for the DICOM
 descriptor. The local C# encoder rejected a high-variation 128x128 RGB frame
 with an output-buffer-size error; the committed RGB fixtures use the smooth
 pattern above. These are reference-encoder limitations, not Java test skips.
+
+## Committed Java encoder fixtures
+
+`Htj2kForeignFrameTest` reads these Java-encoded `.j2c` files and the matching
+`.raw` pixels saved from the fo-dicom.Codecs C# decoder. Java and C# execute
+only during offline fixture generation. Maven and CI read the saved bytes.
+The source RGB sample code is `(x * 2 + y * 3 + component * 19) & mask`.
+
+| Name | Syntax | Size | Bits allocated/stored | C# maximum error from source | Codestream SHA-256 |
+| --- | --- | --- | --- | --- | --- |
+| `htj2k_java_rgb8_201` | `.201` | 64x64 RGB | 8/8 | 0 | `266FB64EBAECB15DA800FA7FC7A9D09CB13D2D7B471F941FE86D455AFB4C998D` |
+| `htj2k_java_rgb12_202` | `.202` | 129x131 RGB | 16/12 | 0 | `FB9B7BF4E63A153EBFD5008251BCAD4F7610452D5828ACE60A1A33B59B038EFE` |
+| `htj2k_java_rgb12_203` | `.203` | 129x131 RGB | 16/12 | 1 | `A0CCFED77DC8F55ECA204D2AFF143ECE8F5DF29EF4FB695FF893C2495C4C88DB` |
+
+The C# decoder and Java decoder agree exactly for the two lossless streams.
+For `.203`, their decoded samples differ by at most one code. The local
+fo-dicom.Codecs encoder produced byte-identical `.201` and `.202` 8-bit RGB
+codestreams with RPCL, so the existing `htj2k_fodicom_rgb8_202` fixture also
+exercises Java's `.201` decode path.

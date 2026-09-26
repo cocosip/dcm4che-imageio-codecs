@@ -17,7 +17,7 @@ abstract class Htj2kImageReaderSpi extends AbstractDicomImageReaderSpi {
     @Override
     public boolean canDecodeInput(Object source) throws IOException {
         return super.canDecodeInput(source)
-                && Jpeg2000LosslessImageReaderSpi.hasCodestreamSignature(
+                && Jpeg2000LosslessImageReaderSpi.hasHtCodestreamSignature(
                         (ImageInputStream) source);
     }
 

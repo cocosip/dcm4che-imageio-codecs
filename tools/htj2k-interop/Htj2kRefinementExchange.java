@@ -14,6 +14,11 @@ import io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.common.Jpeg2000Raster;
 /** Produces a deterministic full codestream with a three-pass LL code-block. */
 public final class Htj2kRefinementExchange {
     public static void main(String[] args) throws Exception {
+        String variant = args.length > 2 ? args[2] : "single";
+        int passes = variant.equals("spp") ? 2 : 3;
+        byte[] refinement = variant.equals("dense")
+                ? new byte[] {0x2f, 0x01}
+                : passes == 2 ? new byte[] {0x01} : new byte[] {0x01, 0x01};
         int[] source = new int[64 * 64];
         Arrays.fill(source, 129);
         Jpeg2000Raster raster = Jpeg2000Raster.of(64, 64, 8, 8, false,
@@ -27,13 +32,12 @@ public final class Htj2kRefinementExchange {
         int kmax = Htj2kQuantizer.kmax(parsed.quantizationPayload(), 0, 0);
         byte[] cleanup = Htj2kCleanupPassEncoder.encode(new Htj2kCodeBlock(
                 2, 2, kmax, new int[] {1, 0, 0, 0}));
-        byte[] data = Arrays.copyOf(cleanup, cleanup.length + 2);
-        data[data.length - 2] = 1;
-        data[data.length - 1] = 1;
+        byte[] data = Arrays.copyOf(cleanup, cleanup.length + refinement.length);
+        System.arraycopy(refinement, 0, data, cleanup.length, refinement.length);
         byte[] packet = Htj2kPacketCodec.encode(Collections.singletonList(
                 new Htj2kPacketCodec.Band(1, 1, Collections.singletonList(
                         new Htj2kPacketCodec.Contribution(kmax - 3,
-                                data, cleanup.length, 3)))));
+                                data, cleanup.length, passes)))));
         byte[] changed = new byte[encoded.length - first.dataLength + packet.length];
         System.arraycopy(encoded, 0, changed, 0, first.dataOffset);
         System.arraycopy(packet, 0, changed, first.dataOffset, packet.length);
@@ -56,7 +60,7 @@ public final class Htj2kRefinementExchange {
         byte[] expected = codec.decode(changed).toFrame(false);
         Files.write(Path.of(args[0]), changed);
         Files.write(Path.of(args[1]), expected);
-        System.out.println("three-pass codestream " + changed.length
+        System.out.println(passes + "-pass " + variant + " codestream " + changed.length
                 + " bytes, cleanup " + cleanup.length + ", packet " + packet.length);
     }
 

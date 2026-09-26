@@ -23,8 +23,9 @@ same row start. Its own decoder does not reproduce the source color frame.
 Use the C# decoder for Java 12-bit RGB streams and use grayscale for
 bidirectional 12-bit checks until this reference encoder is corrected.
 
-`Htj2kRefinementExchange` generates a 64x64 `.201` codestream whose LL block
-has cleanup, SPP, and MRP passes. Compile it with `javac -d <output-directory>`
-so the package path is created, then pass the output codestream to the C#
-`decode` command. The committed `htj2k_refinement_3pass.j2c` and `.raw`
-fixtures are the codestream and fo-dicom.Codecs decoded pixels from this check.
+`Htj2kRefinementExchange` generates 64x64 `.201` codestreams whose LL block
+has cleanup plus SPP, with optional MRP. Compile it with
+`javac -d <output-directory>` so the package path is created, then pass the
+codestream to the C# `decode` command. The optional third argument selects
+`single` (default), `spp`, or `dense`. The committed matching `.j2c` and `.raw`
+fixtures are the codestreams and fo-dicom.Codecs decoded pixels.

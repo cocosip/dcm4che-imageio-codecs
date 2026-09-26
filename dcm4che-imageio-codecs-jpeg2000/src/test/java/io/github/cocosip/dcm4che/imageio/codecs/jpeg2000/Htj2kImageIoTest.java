@@ -141,6 +141,23 @@ class Htj2kImageIoTest {
     }
 
     @Test
+    void readsFoDicomSignedSixteenBitFrame() throws Exception {
+        ImageDescriptor descriptor = descriptor(131, 129, 16, true,
+                "MONOCHROME2", 1, false);
+        byte[] encoded = Files.readAllBytes(Paths.get(getClass().getResource(
+                "/jpeg2000/htj2k_fodicom_signed_gray16_201.j2c").toURI()));
+        BufferedImage decoded = decode(Htj2kFrameCodec.LOSSLESS_UID,
+                encoded, descriptor, null, false);
+        for (int y = 0; y < 131; y++) {
+            for (int x = 0; x < 129; x++) {
+                int code = (x * 17 + y * 31 + x * y * 3) & 65535;
+                int expected = (code & 32768) == 0 ? code : code - 65536;
+                assertEquals(expected, decoded.getRaster().getSample(x, y, 0));
+            }
+        }
+    }
+
+    @Test
     void rejectsAllocatedPrecisionSamplesOutsideBitsStored() throws Exception {
         ImageDescriptor descriptor = descriptor(2, 2, 12, false,
                 "MONOCHROME2", 1, false);

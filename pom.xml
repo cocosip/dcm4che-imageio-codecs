@@ -68,6 +68,7 @@
         <junit.version>5.10.2</junit.version>
         <!-- Match dcm4che 5.35.1's SLF4J API for the test-only provider. -->
         <slf4j.version>2.0.18</slf4j.version>
+        <centralPublishingSkip>false</centralPublishingSkip>
     </properties>
 
     <dependencyManagement>
@@ -242,6 +243,7 @@
                             <publishingServerId>central</publishingServerId>
                             <!-- autoPublish=false: upload to staging, review manually before release -->
                             <autoPublish>false</autoPublish>
+                            <skipPublishing>${centralPublishingSkip}</skipPublishing>
                         </configuration>
                     </plugin>
                 </plugins>

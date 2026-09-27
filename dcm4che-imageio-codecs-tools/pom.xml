@@ -10,6 +10,14 @@
     </parent>
     <artifactId>dcm4che-imageio-codecs-tools</artifactId>
     <name>dcm4che ImageIO Codecs - Tools</name>
+    <!-- This module is for local conversion and manual testing only. -->
+    <properties>
+        <centralPublishingSkip>true</centralPublishingSkip>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
     <dependencies>
         <dependency>
             <groupId>io.github.cocosip</groupId>

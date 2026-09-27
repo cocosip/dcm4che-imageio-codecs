@@ -1,5 +1,9 @@
 # DICOM compression tool
 
+This module is a local Java command-line tool for conversion and manual
+verification. It is built with the reactor but is intentionally excluded from
+release artifacts and Maven Central publishing.
+
 This Java tool follows the output layout of `fo-dicom.PureCodecs.Tools` and
 compresses DICOM files with this repository's codec implementations. It reads
 one input file and writes one DICOM copy for each available target syntax to

@@ -1,9 +1,8 @@
 # JPEG 2000 Java interoperability tool
 
 This manual command uses the JPEG 2000 encoder and decoder in this Java
-repository. The C# fo-dicom.Codecs reference utility that generates foreign
-fixtures is in `tools/fo-dicom-fixtures/jpeg2000`; it is never run by Maven or
-CI. Committed fixture tests consume saved files only.
+repository. Foreign reference fixtures are generated outside this repository;
+committed fixture tests consume the saved files only.
 
 After building `dcm4che-imageio-codecs-jpeg2000`, compile the Java command:
 

@@ -3,6 +3,8 @@ package io.github.cocosip.dcm4che.imageio.codecs.core.registry;
 import java.io.IOException;
 import java.io.InputStream;
 
+import javax.imageio.ImageIO;
+
 import org.dcm4che3.imageio.codec.ImageReaderFactory;
 import org.dcm4che3.imageio.codec.ImageWriterFactory;
 
@@ -16,6 +18,9 @@ public final class CodecRegistrations {
         if (anchor == null) {
             throw new NullPointerException("anchor");
         }
+        // ImageIO does not scan application classpath providers on first use.
+        // Make codec registration deterministic for callers of this API.
+        ImageIO.scanForPlugins();
         try (InputStream readerStream = requireResource(anchor, readers);
                 InputStream writerStream = requireResource(anchor, writers)) {
             ImageReaderFactory.getDefault().load(readerStream);

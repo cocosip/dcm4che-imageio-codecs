@@ -3,6 +3,7 @@ package io.github.cocosip.dcm4che.imageio.codecs.jpeg2000.classic;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
@@ -29,18 +30,20 @@ class Jpeg2000InteropGenerationTest {
         byte[] lossy = Jpeg2000LosslessCodec.encode(source, true,
                 new double[] {0}, Jpeg2000ProgressionOrder.LRCP);
         assertArrayEquals(samples, Jpeg2000LosslessCodec.decode(lossless).component(0));
-        Files.write(Paths.get("target/java-synthetic-lossless.j2k"), lossless);
-        Files.write(Paths.get("target/java-synthetic-lossy.j2k"), lossy);
-        Files.write(Paths.get("target/java-synthetic-sop-eph.j2k"),
+        Path outputDir = Paths.get("target");
+        Files.createDirectories(outputDir);
+        Files.write(outputDir.resolve("java-synthetic-lossless.j2k"), lossless);
+        Files.write(outputDir.resolve("java-synthetic-lossy.j2k"), lossy);
+        Files.write(outputDir.resolve("java-synthetic-sop-eph.j2k"),
                 Jpeg2000LosslessCodec.encode(source, false, new double[] {0},
                         Jpeg2000ProgressionOrder.LRCP, true, true));
-        Files.write(Paths.get("target/java-synthetic-ppt.j2k"),
+        Files.write(outputDir.resolve("java-synthetic-ppt.j2k"),
                 Jpeg2000LosslessCodec.encode(source, false, new double[] {0},
                         Jpeg2000ProgressionOrder.LRCP, false, false, 1));
-        Files.write(Paths.get("target/java-synthetic-ppm.j2k"),
+        Files.write(outputDir.resolve("java-synthetic-ppm.j2k"),
                 Jpeg2000LosslessCodec.encode(source, false, new double[] {0},
                         Jpeg2000ProgressionOrder.LRCP, false, false, 2));
-        Files.write(Paths.get("target/java-synthetic-rgn.j2k"),
+        Files.write(outputDir.resolve("java-synthetic-rgn.j2k"),
                 Jpeg2000LosslessCodec.encode(source, false, new double[] {0},
                         Jpeg2000ProgressionOrder.LRCP, false, false, 0, 2));
         byte[] poc = Jpeg2000LosslessCodec.encode(source, false,
@@ -52,7 +55,7 @@ class Jpeg2000InteropGenerationTest {
         System.arraycopy(poc, 0, withPoc, 0, sot);
         System.arraycopy(pocSegment, 0, withPoc, sot, pocSegment.length);
         System.arraycopy(poc, sot, withPoc, sot + pocSegment.length, poc.length - sot);
-        Files.write(Paths.get("target/java-synthetic-poc.j2k"), withPoc);
+        Files.write(outputDir.resolve("java-synthetic-poc.j2k"), withPoc);
     }
 
     private static int marker(byte[] bytes, int code) {
